@@ -25,9 +25,10 @@ def record(kind, event_id, body=b'', offset=0):
 
 
 def meta(urb=1, event='S', transfer=3, endpoint=2, length=0, actual=0,
-         payload=0, descriptors=0, status=-115, setup=None):
+         payload=0, descriptors=0, status=-115, setup=None, bus=1, device=5,
+         timestamp=1700000000123456000):
     result = struct.pack('<QQHBBBBBBiIIIiiIIiHH8s',
-        urb, 1700000000123456000, 1, 5, endpoint, transfer, ord(event),
+        urb, timestamp, bus, device, endpoint, transfer, ord(event),
         int(setup is not None), int(payload != 0), status, length, actual,
         payload, 1 if transfer == 0 else 0, 100, 0, descriptors, 0,
         0x1234, 0x5678, setup or bytes(8))
@@ -63,13 +64,16 @@ class CaptureE2E(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
 
-    def convert(self, records, success=True, strict=True, stdout=False):
+    def convert(self, records, success=True, strict=True, stdout=False, expression=None, options=()):
         source = self.root / 'input.usbraw'
         source.write_bytes(b'USBSCP\0\x01' + b''.join(records))
         target = self.root / 'output.pcapng'
         command = [BINARY, '-r', str(source), '-w', '-' if stdout else str(target)]
         if strict:
             command.append('--fail-on-loss')
+        command += list(options)
+        if expression is not None:
+            command.append(expression)
         run = subprocess.run(command, capture_output=True, timeout=30)
         self.assertEqual(run.returncode == 0, success, run.stderr.decode())
         if stdout:
@@ -161,6 +165,71 @@ class CaptureE2E(unittest.TestCase):
     def test_untrusted_record_size_is_rejected(self):
         _, run = self.convert([struct.pack('<I', 0xffffffff)], success=False)
         self.assertIn(b'invalid archive record length', run.stderr)
+
+    def test_filter_boolean_precedence_fields_and_masks(self):
+        records = []
+        for i, (bus, endpoint, transfer) in enumerate([(1, 2, 3), (2, 0x81, 1), (2, 0x82, 3)], 1):
+            records += [record(1, i, meta(urb=i, bus=bus, endpoint=endpoint, transfer=transfer)), end(i)]
+        for expression, ids in [
+            ('bus 1 or in and interrupt', [1, 2]),
+            ('(bus 1 or in) and bulk', [1, 3]),
+            ('not (bus 1 or interrupt)', [3]),
+            ('vid 0x1234 pid 0x5678 ep & 0x80 = 0x80 and epnum 2', [3]),
+            ('requested >= 0 and not dev != 5 and type bulk', [1, 3]),
+        ]:
+            with self.subTest(expression=expression):
+                target, _ = self.convert(records, expression=expression)
+                self.assertEqual([struct.unpack_from('<Q', p)[0] for p in packets(target.read_bytes())], ids)
+
+    def test_filter_setup_and_missing_fields_under_not(self):
+        setup = bytes.fromhex('8006000100001200')
+        records = [record(1, 1, meta(urb=1, transfer=2, endpoint=0x80, length=18, setup=setup)), end(1),
+                   record(1, 2, meta(urb=1, event='C', transfer=2, endpoint=0x80, length=18, actual=18, payload=18, status=0)),
+                   record(2, 2, bytes(18)), end(2, 18)]
+        for expression, count in [('setup.request 6 and setup.value 0x100 and setup.length 18', 1),
+                                  ('not setup.request 7', 1), ('not payload[99] = 0', 0),
+                                  ('event complete and status 0 and actual 18', 1)]:
+            target, _ = self.convert(records, expression=expression)
+            self.assertEqual(len(packets(target.read_bytes())), count)
+
+    def test_filter_payload_across_chunks_and_big_endian_slices(self):
+        payload = b'x' * 16382 + b'USB-pattern' + bytes([0xfe, 0xdc, 0xba, 0x98])
+        records = [record(1, 1, meta(length=len(payload), payload=len(payload)))]
+        for offset in range(0, len(payload), 16384):
+            records.append(record(2, 1, payload[offset:offset + 16384], offset))
+        records.append(end(1, len(payload)))
+        for expression in ['payload contains "USB-pattern"', 'payload contains 0x5553422d7061747465726e',
+                           'payload[16382:4] = 0x5553422d', f'payload[{len(payload)-4}:4] & 0xffff0000 = 0xfedc0000']:
+            target, _ = self.convert(records, expression=expression)
+            self.assertEqual(packets(target.read_bytes())[0][64:], payload)
+
+    def test_filter_latency_uses_unfiltered_submission(self):
+        records = [record(1, 1, meta(urb=7, timestamp=1_000_000)), end(1),
+                   record(1, 2, meta(urb=7, event='C', status=0, timestamp=4_000_000)), end(2)]
+        target, _ = self.convert(records, expression='event complete and latency >= 2ms and latency < 4ms')
+        self.assertEqual([p[8] for p in packets(target.read_bytes())], [ord('C')])
+        target, _ = self.convert(records, expression='not latency < 1ms')
+        self.assertEqual(len(packets(target.read_bytes())), 1)
+
+    def test_filter_does_not_match_iso_padding(self):
+        records = [record(1, 1, meta(event='C', transfer=0, endpoint=0x81, length=16,
+                                   actual=4, payload=16, descriptors=2, status=0)),
+                   record(3, 1, struct.pack('<iIII', 0, 0, 2, 0), 0),
+                   record(3, 1, struct.pack('<iIII', 0, 14, 2, 0), 1),
+                   record(2, 1, b'AB', 0), record(2, 1, b'CD', 14), end(1, 4, 2)]
+        for expression, count in [('payload contains 0x0000', 0), ('payload[2] = 0', 0),
+                                  ('not payload[2] = 0', 0), ('payload contains "CD"', 1)]:
+            target, _ = self.convert(records, expression=expression)
+            self.assertEqual(len(packets(target.read_bytes())), count)
+
+    def test_filter_errors_and_explain_require_no_kernel_privileges(self):
+        for expression in ['bus', 'payload[0:3] = 1', '(bulk', 'payload contains 0x1', 'vid 0xgg', 'nonsense 1']:
+            result = subprocess.run([BINARY, '-d', expression], capture_output=True)
+            self.assertNotEqual(result.returncode, 0, expression)
+        for expression in ['bus 1 or payload contains "x"', 'not (bus 1 and status 0)']:
+            result = subprocess.run([BINARY, '-d', expression], capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            self.assertIn(b'Safe kernel prefilter: []', result.stdout)
 
 
 if __name__ == '__main__':

@@ -5,12 +5,14 @@ mod live;
 use anyhow::{Context, Result, ensure};
 use clap::Parser;
 use std::{
+    collections::HashMap,
     fs::{self, File},
     io::{self, BufReader, BufWriter, Write},
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     time::Duration,
 };
+use usbscope_capture::filter::Filter;
 use usbscope_capture::{Reassembler, pcapng, read_raw_header, read_record};
 use usbscope_common::RAW_MAGIC;
 
@@ -53,6 +55,15 @@ struct Args {
     /// Report per-endpoint ISO frame errors, bytes, and observed completion gaps.
     #[arg(long)]
     iso_stats: bool,
+    /// Explain the parsed USB expression and safe kernel prefilter, then exit.
+    #[arg(short = 'd', long)]
+    explain_filter: bool,
+    /// Read the USB filter expression from a text file.
+    #[arg(short = 'F', long, conflicts_with = "filter")]
+    filter_file: Option<PathBuf>,
+    /// Compatibility option: only 0 (full payload) is accepted.
+    #[arg(short = 's', long, default_value_t = 0)]
+    snaplen: u32,
     /// Compiled Aya/Rust BPF object.
     #[arg(long, default_value = "target/usbscope.bpf.o")]
     bpf_object: PathBuf,
@@ -62,6 +73,9 @@ struct Args {
     /// File created once all probes are attached (for supervised capture).
     #[arg(long, hide = true)]
     ready_file: Option<PathBuf>,
+    /// USB filter expression (quote expressions containing shell operators).
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    filter: Vec<String>,
 }
 
 fn main() {
@@ -92,6 +106,24 @@ fn output(path: &Path) -> Result<BufWriter<Box<dyn Write>>> {
 }
 
 fn run(args: Args) -> Result<()> {
+    ensure!(
+        args.snaplen == 0,
+        "usbscope captures full payloads; only -s 0 is supported"
+    );
+    let expression = if let Some(path) = &args.filter_file {
+        fs::read_to_string(path).context("reading filter expression")?
+    } else {
+        args.filter.join(" ")
+    };
+    let filter = Filter::parse(&expression)?;
+    let needs_latency = filter.needs_latency();
+    let predicates = filter.kernel_predicates();
+    if args.explain_filter {
+        println!(
+            "USB filter: {filter:#?}\nSafe kernel prefilter: {predicates:#?}\nExact evaluation: userspace; missing fields are unknown, including under not."
+        );
+        return Ok(());
+    }
     if args.list_interfaces {
         println!("any\tAll USB buses");
         let mut buses = Vec::new();
@@ -183,6 +215,7 @@ fn run(args: Args) -> Result<()> {
     let mut assembler = Reassembler::default();
     let mut written = 0;
     let mut iso_stats = audio::IsoStats::default();
+    let mut submissions = HashMap::<u64, u64>::new();
     let mut consume = |record: &[u8]| -> Result<bool> {
         if let Some(raw) = &mut raw {
             raw.write_all(&(record.len() as u32).to_le_bytes())?;
@@ -191,6 +224,24 @@ fn run(args: Args) -> Result<()> {
         if let Some(mut event) = assembler.push(record)?
             && args.count.is_none_or(|limit| written < limit)
         {
+            let mut latency = None;
+            if needs_latency {
+                let m = &event.meta;
+                if m.event_type == b'S' {
+                    ensure!(
+                        submissions.len() < 65536,
+                        "too many unmatched submissions for latency filtering"
+                    );
+                    submissions.insert(m.urb_id, m.timestamp_ns);
+                } else if let Some(start) = submissions.remove(&m.urb_id) {
+                    latency = m.timestamp_ns.checked_sub(start);
+                }
+            }
+            let selected = (bus == 0 || bus == u32::from(event.meta.bus))
+                && args.device.is_none_or(|device| device == event.meta.device);
+            if !selected || !filter.matches(&mut event, latency)? {
+                return Ok(false);
+            }
             if args.iso_stats {
                 iso_stats.observe(&event);
             }
@@ -233,6 +284,7 @@ fn run(args: Args) -> Result<()> {
                 device: args.device,
                 duration,
                 ready_file: args.ready_file.as_deref(),
+                predicates: &predicates,
             },
             &mut consume,
         )?)

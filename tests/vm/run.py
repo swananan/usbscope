@@ -15,9 +15,10 @@ parser.add_argument('--log', type=Path, default=ROOT / 'target/vm-e2e.log')
 parser.add_argument('--live', action='store_true', help='validate full payload capture through the CLI')
 parser.add_argument('--artifacts', type=Path, default=ROOT / 'target/vm-artifacts')
 parser.add_argument('--audio', action='store_true', help='include a 137-frame sparse ISO audio URB')
+parser.add_argument('--filters', action='store_true', help='compare live kernel prefiltering and exact userspace filtering')
 args = parser.parse_args()
-if args.audio and not args.live:
-    parser.error('--audio requires --live')
+if (args.audio or args.filters) and not args.live:
+    parser.error('--audio and --filters require --live')
 subprocess.run(['cargo', 'build', '--example', 'probe-smoke'], cwd=ROOT, check=True)
 if args.live:
     subprocess.run(['cargo', 'build'], cwd=ROOT, check=True)
@@ -114,6 +115,25 @@ test "$(cat /sys/module/usbscope_iso/parameters/result)" = 0 || fail
 cat /sys/module/usbscope_iso/parameters/actual_lengths > /out/iso-lengths.txt
 cat /sys/module/usbscope_iso/parameters/frame_status > /out/iso-status.txt
 wait $capture || fail''', 1))
+    if args.filters:
+        init.write_text(init.read_text().replace('sync\necho USBSCOPE_VM_PASS', '''
+filter_capture() {
+    name=$1
+    expression=$2
+    /usbscope --bpf-object /usbscope.bpf.o -w /out/$name.pcapng --ready-file /tmp/$name-ready --duration 3 --fail-on-loss "$expression" 2>/out/$name.log &
+    capture=$!
+    for i in $(seq 1 100); do
+        test -f /tmp/$name-ready && break
+        sleep 0.1
+    done
+    test -f /tmp/$name-ready || fail
+    /usb-fixture --bulk || fail
+    wait $capture || fail
+}
+filter_capture filtered 'bulk and requested > 1000000 and event complete and latency >= 0ns'
+filter_capture mixed 'bus 999 or payload contains 0x55534243'
+sync
+echo USBSCOPE_VM_PASS'''))
     init.chmod(0o755)
     # newc archive, generated without root or device nodes (devtmpfs supplies those).
     archive = work / 'initramfs.cpio'
@@ -148,4 +168,5 @@ wait $capture || fail''', 1))
         raise SystemExit('VM e2e failed')
     print('\n'.join(line for line in text.splitlines() if 'OBSERVED' in line or 'USBSCOPE_' in line))
     if args.live:
-        subprocess.run(['python3', str(ROOT / 'tests/vm/validate.py'), str(args.artifacts)] + (['--audio'] if args.audio else []), check=True)
+        subprocess.run(['python3', str(ROOT / 'tests/vm/validate.py'), str(args.artifacts)]
+                       + (['--audio'] if args.audio else []) + (['--filters'] if args.filters else []), check=True)

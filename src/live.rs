@@ -11,7 +11,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
 };
-use usbscope_common::{CaptureConfig, CaptureStats};
+use usbscope_common::{CaptureConfig, CaptureStats, KernelPredicate};
 
 static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
@@ -26,6 +26,7 @@ pub struct Options<'a> {
     pub device: Option<u8>,
     pub duration: Option<Duration>,
     pub ready_file: Option<&'a Path>,
+    pub predicates: &'a [KernelPredicate],
 }
 
 /// Fail closed if the post-DMA completion call site cannot be identified.
@@ -102,6 +103,12 @@ pub fn capture(
         bpf.take_map("STATS").context("missing STATS map")?,
     )?;
     let mut ring = RingBuf::try_from(bpf.take_map("EVENTS").context("missing EVENTS map")?)?;
+    let mut filter = Array::<_, KernelPredicate>::try_from(
+        bpf.take_map("FILTER").context("missing FILTER map")?,
+    )?;
+    for (index, predicate) in options.predicates.iter().enumerate() {
+        filter.set(index as u32, *predicate, 0)?;
+    }
     for (program, function) in [
         ("observe_giveback", "__usb_hcd_giveback_urb"),
         ("observe_submit", "usb_hcd_submit_urb"),
@@ -138,7 +145,7 @@ pub fn capture(
         bus: options.bus,
         device: options.device.map_or(u32::MAX, u32::from),
         enabled: 1,
-        reserved: 0,
+        filter_count: options.predicates.len() as u32,
     };
     INTERRUPTED.store(false, Ordering::Relaxed);
     unsafe {

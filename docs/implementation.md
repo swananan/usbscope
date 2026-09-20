@@ -9,7 +9,8 @@ because it compiles. Hardware/VM coverage and known limitations are recorded her
 | P0.2 | Rust/C CO-RE build and VM eBPF smoke test | Complete |
 | P1 | Live S/C/E hooks, contiguous long payload, bus/device selection, loss accounting | Complete |
 | P2 | ISO/audio metadata, sparse payload, ISO statistics, initial device context | Complete |
-| P3 | Complete filter language, offline analysis, rotation and release checks | Pending |
+| P3.1 | USB filter language, safe kernel prefilter, archive analysis | Complete |
+| P3.2 | SG buffers, pcapng input, rotation and release checks | Pending |
 
 ## Invariants
 
@@ -89,3 +90,18 @@ including raw descriptor bytes. It is not a hotplug/alternate-setting timeline
 and does not inject fabricated enumeration packets into Wireshark. Live ISO IN,
 UAC2/UAC3 feedback decoding, PCM/WAV reconstruction, and hardware timing remain
 unvalidated or unimplemented; synthetic sparse ISO IN coverage is separate.
+
+## P3.1 validation
+
+Fifteen CLI/TShark e2e tests cover boolean precedence, masks, setup fields,
+unknown fields under negation, payload patterns crossing transport chunks,
+big endian slices, latency using an otherwise filtered submission, and exclusion
+of ISO padding from byte searches. A compiler soundness test checks that safe
+kernel predicates do not reject matching completion events across combinations
+of metadata, errors, and payload bytes.
+
+Live filter e2e passed on both kernels: a bulk/length/complete/latency expression
+allowed exactly two large URBs into the kernel stream and selected their two
+completions. `bus 999 or payload contains 0x55534243` retained all nine input
+URBs and selected the three matching command submissions without false negatives.
+The full audio, payload, replay, TShark, and loss suites remain enabled.

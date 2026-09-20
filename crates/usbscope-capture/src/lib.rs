@@ -6,6 +6,7 @@ use std::{
 use tempfile::SpooledTempFile;
 use usbscope_common::*;
 
+pub mod filter;
 pub mod pcapng;
 
 pub struct Event {

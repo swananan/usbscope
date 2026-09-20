@@ -11,6 +11,47 @@ pub const COMPLETE: u32 = 0;
 pub const LOSS_RING: u32 = 1;
 pub const LOSS_READ: u32 = 2;
 pub const LOSS_UNSUPPORTED_BUFFER: u32 = 3;
+pub const MAX_KERNEL_PREDICATES: u32 = 64;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct KernelPredicate {
+    pub value: u64,
+    pub mask: u64,
+    pub field: u32,
+    pub comparison: u32,
+}
+
+impl KernelPredicate {
+    #[inline(always)]
+    pub fn matches(&self, meta: &EventMeta) -> bool {
+        let value = match self.field {
+            1 => u64::from(meta.bus),
+            2 => u64::from(meta.device),
+            3 => u64::from(meta.vid),
+            4 => u64::from(meta.pid),
+            5 => u64::from(meta.endpoint),
+            6 => u64::from(meta.endpoint & 15),
+            7 => u64::from(meta.endpoint >> 7),
+            8 => u64::from(meta.transfer_type),
+            9 => u64::from(meta.requested_len),
+            10 => u64::from(meta.iso_count),
+            _ => return true,
+        } & self.mask;
+        match self.comparison {
+            0 => value == self.value,
+            1 => value != self.value,
+            2 => value < self.value,
+            3 => value <= self.value,
+            4 => value > self.value,
+            5 => value >= self.value,
+            _ => true,
+        }
+    }
+}
+
+#[cfg(feature = "user")]
+unsafe impl aya::Pod for KernelPredicate {}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
@@ -22,7 +63,7 @@ pub struct CaptureConfig {
     pub bus: u32,
     pub device: u32,
     pub enabled: u32,
-    pub reserved: u32,
+    pub filter_count: u32,
 }
 
 #[repr(C)]

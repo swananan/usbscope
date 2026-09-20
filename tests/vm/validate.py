@@ -77,4 +77,14 @@ assert len(parsed.stdout.splitlines()) == len(packets), 'TShark did not parse al
 assert str(len(expected)) in parsed.stdout, 'TShark lost the large USB payload'
 losses = (root / 'loss.log').read_text()
 assert re.search(r'[1-9][0-9]* ring losses', losses), 'tiny ring did not report loss'
+if '--filters' in sys.argv:
+    filtered = subprocess.run(['tshark', '-r', str(root / 'filtered.pcapng'), '-T', 'fields',
+        '-e', 'usb.urb_type', '-e', 'usb.urb_len'], capture_output=True, text=True, check=True).stdout.strip().splitlines()
+    assert filtered == [f"'C'\t{len(expected)}"] * 2, filtered
+    assert 'kernel: 2 submitted, 2 completed' in (root / 'filtered.log').read_text()
+    mixed = subprocess.run(['tshark', '-r', str(root / 'mixed.pcapng'), '-T', 'fields', '-e', 'usb.urb_type'],
+        capture_output=True, text=True, check=True).stdout.strip().splitlines()
+    assert mixed == ["'S'"] * 3, mixed
+    assert 'kernel: 9 submitted, 9 completed' in (root / 'mixed.log').read_text()
+    print('FILTER_E2E_PASS: kernel rejection, completion latency, mixed OR without false negatives')
 print(f'LIVE_E2E_PASS: {len(packets)} events, {len(expected)} bytes each direction, exact replay and TShark')

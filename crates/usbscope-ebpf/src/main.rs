@@ -20,6 +20,8 @@ static EVENTS: RingBuf = RingBuf::with_byte_size(16 * 1024 * 1024, 0);
 #[map]
 static CONFIG: Array<CaptureConfig> = Array::with_max_entries(1, 0);
 #[map]
+static FILTER: Array<KernelPredicate> = Array::with_max_entries(MAX_KERNEL_PREDICATES, 0);
+#[map]
 static STATS: PerCpuArray<CaptureStats> = PerCpuArray::with_max_entries(1, 0);
 #[map]
 static SEQUENCE: Array<u64> = Array::with_max_entries(1, 0);
@@ -117,6 +119,46 @@ fn selected(meta: &EventMeta, config: &CaptureConfig) -> bool {
         && (config.device == u32::MAX || config.device == u32::from(meta.device))
 }
 
+#[repr(C)]
+struct FilterContext {
+    meta: *const EventMeta,
+    accepted: u32,
+    reserved: u32,
+}
+
+#[inline(never)]
+fn prefilter(meta: &EventMeta, count: u32) -> bool {
+    if count == 0 {
+        return true;
+    }
+    let mut context = FilterContext {
+        meta,
+        accepted: 1,
+        reserved: 0,
+    };
+    let result = unsafe {
+        generated::bpf_loop(
+            count.min(MAX_KERNEL_PREDICATES),
+            filter_predicate as *mut c_void,
+            (&raw mut context).cast(),
+            0,
+        )
+    };
+    // Failure must not cause a false negative; exact evaluation is in userspace.
+    result < 0 || context.accepted != 0
+}
+
+unsafe extern "C" fn filter_predicate(index: u32, context: *mut FilterContext) -> u64 {
+    let context = unsafe { &mut *context };
+    if let Some(predicate) = FILTER.get(index) {
+        if !predicate.matches(unsafe { &*context.meta }) {
+            context.accepted = 0;
+            return 1;
+        }
+    }
+    0
+}
+
 #[fentry]
 pub fn observe_submit(ctx: FEntryContext) -> u32 {
     unsafe {
@@ -142,7 +184,7 @@ unsafe fn submit(address: u64) {
         count(4);
         return;
     }
-    if !selected(&meta, config) {
+    if !selected(&meta, config) || !prefilter(&meta, config.filter_count) {
         return;
     }
     let id = next_id();

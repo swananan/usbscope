@@ -62,7 +62,21 @@ At stop, new submissions are disabled, with a 200 ms completion drain. URBs
 still in flight at that boundary are reported separately from transport loss.
 
 Scatter-gather buffers are not supported at this stage; they are reported
-explicitly and make `--fail-on-loss` fail. Full expression filters are a subsequent stage.
+explicitly and make `--fail-on-loss` fail.
+
+## Filters
+
+```sh
+sudo target/debug/usbscope -w capture.pcapng 'vid 0x1234 and bulk and in'
+target/debug/usbscope -r capture.usbraw -w slow.pcapng 'event complete and latency > 2ms'
+target/debug/usbscope -d 'bus 1 or payload contains 0x55534243'
+```
+
+The [USB filter grammar](docs/filters.md) supports boolean combinations, numeric
+comparisons, masks, control setup fields, streaming payload searches, and latency.
+Safe necessary predicates run in BPF; exact matching runs after reassembly.
+`-F` reads a filter file. `-s 0` is accepted for compatibility and always means
+full payload capture. Other snap lengths are rejected.
 
 ## ISO and audio
 
@@ -95,6 +109,7 @@ sh tests/vm/build-kernel.sh /path/to/linux-source
 python3 tests/vm/run.py
 python3 tests/vm/run.py --live
 python3 tests/vm/run.py --live --audio
+python3 tests/vm/run.py --live --audio --filters
 ```
 
 The VM runner needs QEMU x86_64, a static BusyBox, GCC, cpio, and a Linux source
