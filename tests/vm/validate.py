@@ -2,6 +2,7 @@
 """Independent checks on real kernel capture, including exact USB payload bytes."""
 from pathlib import Path
 import re
+import json
 import struct
 import subprocess
 import sys
@@ -35,6 +36,37 @@ for event, direction in [(ord('S'), 0), (ord('C'), 0x80)]:
     assert next(p for p in pair if p[8] == ord('C'))[28:32] == bytes(4), 'completion status incorrect'
 descriptor = (root / 'descriptor.bin').read_bytes()
 assert any(p[8] == ord('C') and p[9] == 2 and p[64:] == descriptor for p in packets)
+if '--audio' in sys.argv:
+    actual_lengths = [int(x) for x in (root / 'iso-lengths.txt').read_text().strip().split(',')]
+    frame_status = [int(x) for x in (root / 'iso-status.txt').read_text().strip().split(',')]
+    assert len(actual_lengths) == len(frame_status) == 137
+    context = json.loads((root / 'devices.json').read_text())
+    assert any(d['product'] == 'QEMU USB Audio' and d['descriptors_hex'] for d in context['devices'])
+    iso = [p for p in packets if p[9] == 0]
+    assert len(iso) == 2, 'missing ISO submission/completion'
+    submitted = next(p for p in iso if p[8] == ord('S'))
+    completed = next(p for p in iso if p[8] == ord('C'))
+    assert submitted[:8] == completed[:8]
+    assert struct.unpack_from('<I', submitted, 60)[0] == 137
+    assert struct.unpack_from('<I', completed, 60)[0] == 137
+    expected_iso = bytearray(136 * 224 + 192)
+    for i in range(137):
+        length = 192 if i % 3 else 188
+        offset, captured_len = struct.unpack_from('<II', submitted, 64 + i * 16 + 4)
+        assert (offset, captured_len) == (i * 224, length)
+        status, offset, captured_len = struct.unpack_from('<iII', completed, 64 + i * 16)
+        assert (status, offset, captured_len) == (frame_status[i], i * 224, actual_lengths[i])
+        expected_iso[i * 224:i * 224 + length] = bytes((i * 13 + j * 7) % 251 for j in range(length))
+    assert submitted[64 + 137 * 16:] == expected_iso, 'ISO offsets, gaps, or payload differ'
+    assert len(completed) == 64 + 137 * 16, 'OUT completion must not duplicate payload'
+    decoded_iso = subprocess.run(['tshark', '-r', str(root / 'live.pcapng'), '-Y', 'usb.transfer_type == 0',
+        '-T', 'fields', '-e', 'usb.iso.numdesc', '-e', 'usb.iso.iso_off'],
+        capture_output=True, text=True, check=True).stdout.strip().splitlines()
+    assert len(decoded_iso) == 2
+    for line in decoded_iso:
+        count, offsets = line.split('\t')
+        assert all(int(n) == 137 for n in count.split(',')) and len(offsets.split(',')) == 137
+    print('ISO_E2E_PASS: 137 audio frames, per-frame status/length, original offsets and zero-filled gaps')
 replay = root / 'replay.pcapng'
 subprocess.run(['target/debug/usbscope', '-r', str(root / 'live.usbraw'), '-w', str(replay), '--fail-on-loss'], check=True)
 assert replay.read_bytes() == blob, 'raw replay changed captured packets'

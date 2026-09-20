@@ -119,3 +119,22 @@ long core_completion_status(u64 address, i32 *status)
     if (!*status && (flags & 1) && actual < requested) *status = -121;
     return 0;
 }
+
+struct iso_descriptor { i32 status; u32 offset, length, padding; };
+
+long core_read_iso(u64 address, u32 index, u32 submission, struct iso_descriptor *out)
+{
+    struct urb *urb = (void *)address;
+    /* Relocate the flexible-array field, without indexing its zero-size BTF
+     * array. Aya correctly rejects an element index in a zero-size array. */
+    u32 offset = __builtin_preserve_field_info(urb->iso_frame_desc, 0);
+    struct usb_iso_packet_descriptor *first = (void *)(address + offset);
+    u32 size = __builtin_preserve_type_info(*(struct usb_iso_packet_descriptor *)0, 1);
+    struct usb_iso_packet_descriptor *desc = (void *)((u8 *)first + (u64)index * size);
+    READ(out->offset, desc->offset);
+    READ(out->status, desc->status);
+    if (submission) READ(out->length, desc->length);
+    else READ(out->length, desc->actual_length);
+    out->padding = 0;
+    return 0;
+}

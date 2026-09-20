@@ -102,6 +102,7 @@ int main(int argc, char **argv)
         *strrchr(base, '/') = 0;
         unsigned dev = attribute(base, "devnum", 10);
         if (dev == 1) continue;
+        if (attribute(base, "idProduct", 16) != 1) continue;
         unsigned bus = attribute(base, "busnum", 10);
         char path[128];
         snprintf(path, sizeof(path), "/dev/bus/usb/%03u/%03u", bus, dev);

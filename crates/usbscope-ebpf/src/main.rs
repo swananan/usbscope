@@ -51,15 +51,35 @@ struct Chunk<const N: usize> {
 #[repr(C)]
 struct CopyContext {
     source: u64,
+    destination: u64,
     event_id: u64,
     total: u32,
     reason: u32,
     copied: u64,
 }
 
+#[repr(C)]
+struct IsoRecord {
+    header: RecordHeader,
+    descriptor: IsoDescriptor,
+}
+
+#[repr(C)]
+struct IsoContext {
+    address: u64,
+    copy: CopyContext,
+    requested: u32,
+    submission: u32,
+    data_phase: u32,
+    span: u32,
+    descriptors: u32,
+    reserved: u32,
+}
+
 unsafe extern "C" {
     fn core_read_urb(address: u64, meta: *mut EventMeta, buffer: *mut u64, sg: *mut u32) -> i64;
     fn core_completion_status(address: u64, status: *mut i32) -> i64;
+    fn core_read_iso(address: u64, index: u32, submission: u32, out: *mut IsoDescriptor) -> i64;
 }
 
 #[inline(always)]
@@ -245,26 +265,57 @@ unsafe fn emit(address: u64, urb_id: u64, event_type: u8, status: i32) {
         return;
     }
     meta.status = status;
-    // ISO is implemented in the next stage; never emit it with missing descriptors.
-    if meta.transfer_type == 0 {
-        count(5);
-        return;
-    }
     let data_phase = (event_type == b'S' && meta.endpoint & 0x80 == 0)
         || (event_type == b'C' && meta.endpoint & 0x80 != 0);
-    if data_phase {
+    let event_id = next_id();
+    let mut iso = IsoContext {
+        // A no-fault read turns the tracing BTF pointer into an address scalar.
+        // Dynamic flexible-array offsets then use only probe_read_kernel,
+        // instead of arithmetic on a verifier-tracked typed kernel pointer.
+        address: unsafe { bpf_probe_read_kernel(&address as *const u64) }.unwrap_or(0),
+        copy: CopyContext {
+            source: buffer,
+            destination: 0,
+            event_id,
+            total: 0,
+            reason: 0,
+            copied: 0,
+        },
+        requested: meta.requested_len,
+        submission: u32::from(event_type == b'S'),
+        data_phase: u32::from(data_phase),
+        span: 0,
+        descriptors: 0,
+        reserved: 0,
+    };
+    if meta.transfer_type == 0 {
+        let result = unsafe {
+            generated::bpf_loop(
+                meta.iso_count,
+                iso_measure as *mut c_void,
+                (&raw mut iso).cast(),
+                0,
+            )
+        };
+        if result < 0 || iso.copy.reason != 0 {
+            count(4);
+            return;
+        }
+        if data_phase {
+            meta.payload_len = iso.span;
+        }
+    } else if data_phase {
         meta.payload_len = if event_type == b'S' {
             meta.requested_len
         } else {
             meta.actual_len
         };
-        meta.has_data = u8::from(meta.payload_len != 0);
     }
+    meta.has_data = u8::from(meta.payload_len != 0);
     if meta.payload_len > meta.requested_len || meta.requested_len > i32::MAX as u32 {
         count(4);
         return;
     }
-    let event_id = next_id();
     let Some(mut begin) = EVENTS.reserve::<Begin>(0) else {
         count(3);
         return;
@@ -278,12 +329,35 @@ unsafe fn emit(address: u64, urb_id: u64, event_type: u8, status: i32) {
     begin.submit(0);
     let mut copy = CopyContext {
         source: buffer,
+        destination: 0,
         event_id,
         total: meta.payload_len,
         reason: 0,
         copied: 0,
     };
-    if meta.payload_len != 0 {
+    let mut descriptors = 0;
+    if meta.transfer_type == 0 {
+        if meta.payload_len != 0 && (sg != 0 || buffer == 0) {
+            iso.copy.reason = LOSS_UNSUPPORTED_BUFFER;
+            count(5);
+        } else {
+            let result = unsafe {
+                generated::bpf_loop(
+                    meta.iso_count,
+                    iso_emit as *mut c_void,
+                    (&raw mut iso).cast(),
+                    0,
+                )
+            };
+            if result < 0 {
+                iso.copy.reason = LOSS_READ;
+                count(4);
+            }
+        }
+        copy.reason = iso.copy.reason;
+        copy.copied = iso.copy.copied;
+        descriptors = iso.descriptors;
+    } else if meta.payload_len != 0 {
         if sg != 0 || buffer == 0 {
             copy.reason = LOSS_UNSUPPORTED_BUFFER;
             count(5);
@@ -313,12 +387,85 @@ unsafe fn emit(address: u64, urb_id: u64, event_type: u8, status: i32) {
             header: header(RECORD_END, event_id, 40, 0),
             end: EventEnd {
                 copied_bytes: copy.copied,
-                descriptors: 0,
+                descriptors,
                 reason: copy.reason,
             },
         });
     }
     end.submit(0);
+}
+
+unsafe extern "C" fn iso_measure(index: u32, context: *mut IsoContext) -> u64 {
+    let context = unsafe { &mut *context };
+    let mut descriptor = IsoDescriptor::default();
+    if unsafe { core_read_iso(context.address, index, context.submission, &mut descriptor) } < 0 {
+        context.copy.reason = LOSS_READ;
+        return 1;
+    }
+    let end = u64::from(descriptor.offset) + u64::from(descriptor.length);
+    if end > u64::from(context.requested) {
+        context.copy.reason = LOSS_READ;
+        return 1;
+    }
+    if descriptor.length != 0 {
+        context.span = context.span.max(end as u32);
+    }
+    0
+}
+
+unsafe extern "C" fn iso_emit(index: u32, context: *mut IsoContext) -> u64 {
+    let context = unsafe { &mut *context };
+    let mut descriptor = IsoDescriptor::default();
+    if unsafe { core_read_iso(context.address, index, context.submission, &mut descriptor) } < 0 {
+        context.copy.reason = LOSS_READ;
+        count(4);
+        return 1;
+    }
+    let Some(mut record) = EVENTS.reserve::<IsoRecord>(0) else {
+        context.copy.reason = LOSS_RING;
+        count(3);
+        return 1;
+    };
+    unsafe {
+        record.as_mut_ptr().write(IsoRecord {
+            header: header(RECORD_ISO, context.copy.event_id, 40, u64::from(index)),
+            descriptor,
+        });
+    }
+    record.submit(0);
+    context.descriptors += 1;
+    if context.data_phase != 0 && descriptor.length != 0 {
+        let mut copy = CopyContext {
+            source: context
+                .copy
+                .source
+                .wrapping_add(u64::from(descriptor.offset)),
+            destination: u64::from(descriptor.offset),
+            event_id: context.copy.event_id,
+            total: descriptor.length,
+            reason: 0,
+            copied: 0,
+        };
+        let iterations = (u64::from(copy.total) + CHUNK_SIZE as u64 - 1) / CHUNK_SIZE as u64;
+        let result = unsafe {
+            generated::bpf_loop(
+                iterations as u32,
+                copy_callback as *mut c_void,
+                (&raw mut copy).cast(),
+                0,
+            )
+        };
+        context.copy.copied += copy.copied;
+        context.copy.reason = copy.reason;
+        if result < 0 {
+            context.copy.reason = LOSS_READ;
+            count(4);
+        }
+        if context.copy.reason != 0 {
+            return 1;
+        }
+    }
+    0
 }
 
 unsafe extern "C" fn copy_callback(index: u32, context: *mut CopyContext) -> u64 {
@@ -358,7 +505,12 @@ unsafe fn copy_chunk<const N: usize>(context: &CopyContext, offset: u64, length:
     };
     let pointer = chunk.as_mut_ptr();
     unsafe {
-        (*pointer).header = header(RECORD_DATA, context.event_id, 24 + length, offset);
+        (*pointer).header = header(
+            RECORD_DATA,
+            context.event_id,
+            24 + length,
+            context.destination + offset,
+        );
         let result = generated::bpf_probe_read_kernel(
             (&raw mut (*pointer).data).cast(),
             length,

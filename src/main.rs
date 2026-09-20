@@ -1,3 +1,5 @@
+mod audio;
+mod devices;
 mod live;
 
 use anyhow::{Context, Result, ensure};
@@ -45,6 +47,12 @@ struct Args {
     /// Preserve ring records in an archive for replay or diagnosing loss.
     #[arg(long, value_name = "FILE")]
     raw_output: Option<PathBuf>,
+    /// Save initial sysfs device/descriptor context as JSON (live capture only).
+    #[arg(long, value_name = "FILE")]
+    device_context: Option<PathBuf>,
+    /// Report per-endpoint ISO frame errors, bytes, and observed completion gaps.
+    #[arg(long)]
+    iso_stats: bool,
     /// Compiled Aya/Rust BPF object.
     #[arg(long, default_value = "target/usbscope.bpf.o")]
     bpf_object: PathBuf,
@@ -140,6 +148,16 @@ fn run(args: Args) -> Result<()> {
     if let (Some(read), Some(write)) = (&args.read, &args.write) {
         different_files(read, write)?;
     }
+    if let Some(context) = &args.device_context {
+        ensure!(
+            args.read.is_none(),
+            "--device-context is only available during live capture"
+        );
+        for other in [&args.write, &args.raw_output].into_iter().flatten() {
+            different_files(context, other)?;
+        }
+        devices::snapshot(context)?;
+    }
     let mut input = args
         .read
         .as_ref()
@@ -164,6 +182,7 @@ fn run(args: Args) -> Result<()> {
     }
     let mut assembler = Reassembler::default();
     let mut written = 0;
+    let mut iso_stats = audio::IsoStats::default();
     let mut consume = |record: &[u8]| -> Result<bool> {
         if let Some(raw) = &mut raw {
             raw.write_all(&(record.len() as u32).to_le_bytes())?;
@@ -172,6 +191,9 @@ fn run(args: Args) -> Result<()> {
         if let Some(mut event) = assembler.push(record)?
             && args.count.is_none_or(|limit| written < limit)
         {
+            if args.iso_stats {
+                iso_stats.observe(&event);
+            }
             if let Some(writer) = &mut writer {
                 writer.write_event(&mut event)?;
             } else {
@@ -223,6 +245,9 @@ fn run(args: Args) -> Result<()> {
         raw.flush()?;
     }
     let stats = &assembler.stats;
+    if args.iso_stats {
+        iso_stats.report();
+    }
     eprintln!(
         "{} events written; {} incomplete events; {} orphan records",
         written, stats.incomplete, stats.orphan_records

@@ -6,7 +6,7 @@ commands, USB-aware filters, and Wireshark-compatible capture files.
 
 The implementation is being built in stages. See [the implementation plan](docs/implementation.md)
 for completed work, validation, and remaining limitations. Live control, bulk,
-and interrupt capture is available for contiguous URB buffers on tested kernels.
+interrupt, and ISO capture is available for contiguous URB buffers on tested kernels.
 
 ## Capture semantics
 
@@ -61,9 +61,26 @@ error. This hook ordering is kernel-internal and requires regression coverage.
 At stop, new submissions are disabled, with a 200 ms completion drain. URBs
 still in flight at that boundary are reported separately from transport loss.
 
-Scatter-gather buffers and live ISO are not supported at this stage; they are
-reported explicitly and make `--fail-on-loss` fail. Full expression filters,
-descriptor context, and audio support are subsequent stages.
+Scatter-gather buffers are not supported at this stage; they are reported
+explicitly and make `--fail-on-loss` fail. Full expression filters are a subsequent stage.
+
+## ISO and audio
+
+```sh
+sudo target/debug/usbscope -i usb1 -w audio.pcapng --iso-stats --device-context devices.json
+```
+
+Every ISO frame retains its status, original offset, and requested (submission)
+or actual (completion) length. Only valid frame regions are copied; gaps are
+zero-filled on export. Descriptor counts are not capped at 128. Statistics include
+empty frames and errors as well as URB completion gaps, which are software
+observations rather than exact bus timing.
+
+The optional device JSON contains an initial passive sysfs snapshot, including
+descriptor bytes. It is not a complete configuration/hotplug timeline and does
+not automatically teach Wireshark a previously enumerated audio device. Capture
+enumeration when class-specific decoding is needed. PCM/WAV extraction and UAC
+feedback interpretation are not implemented.
 
 ## Kernel development tests
 
@@ -77,6 +94,7 @@ sh scripts/build-ebpf.sh
 sh tests/vm/build-kernel.sh /path/to/linux-source
 python3 tests/vm/run.py
 python3 tests/vm/run.py --live
+python3 tests/vm/run.py --live --audio
 ```
 
 The VM runner needs QEMU x86_64, a static BusyBox, GCC, cpio, and a Linux source
@@ -88,3 +106,5 @@ The live suite adds 2 MiB + 512 byte USB storage reads and writes, unique URB
 pairing, exact payload comparison, byte-identical archive replay, TShark decoding,
 and an intentionally undersized ring that must report loss and fail strict mode.
 Artifacts are retained under `target/vm-artifacts`.
+The audio suite builds a VM-only test driver against the chosen kernel and
+verifies a 137-frame sparse ISO transfer against independent driver results.

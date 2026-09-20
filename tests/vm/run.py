@@ -14,7 +14,10 @@ parser.add_argument('--timeout', type=int, default=120)
 parser.add_argument('--log', type=Path, default=ROOT / 'target/vm-e2e.log')
 parser.add_argument('--live', action='store_true', help='validate full payload capture through the CLI')
 parser.add_argument('--artifacts', type=Path, default=ROOT / 'target/vm-artifacts')
+parser.add_argument('--audio', action='store_true', help='include a 137-frame sparse ISO audio URB')
 args = parser.parse_args()
+if args.audio and not args.live:
+    parser.error('--audio requires --live')
 subprocess.run(['cargo', 'build', '--example', 'probe-smoke'], cwd=ROOT, check=True)
 if args.live:
     subprocess.run(['cargo', 'build'], cwd=ROOT, check=True)
@@ -24,6 +27,12 @@ subprocess.run(['gcc', '-O2', '-Wall', '-Werror', '-o', str(ROOT / 'target/usb-f
 
 with tempfile.TemporaryDirectory(prefix='usbscope-vm-', dir=ROOT / 'target') as temp:
     work = Path(temp)
+    if args.audio:
+        module_dir = work / 'module'
+        shutil.copytree(ROOT / 'tests/vm/kernel', module_dir)
+        kernel_build = args.kernel.resolve().parents[3]
+        subprocess.run(['make', '-s', '-C', str(kernel_build), '-j4', 'modules'], check=True)
+        subprocess.run(['make', '-s', '-C', str(kernel_build), f'M={module_dir}', 'modules'], check=True)
     tree = work / 'root'
     tree.mkdir()
     for directory in ['bin', 'dev', 'proc', 'sys', 'tmp', 'run', 'out']:
@@ -49,6 +58,8 @@ with tempfile.TemporaryDirectory(prefix='usbscope-vm-', dir=ROOT / 'target') as 
     if args.live:
         binary(ROOT / 'target/debug/usbscope', '/usbscope')
     install(ROOT / 'target/usbscope.bpf.o', '/usbscope.bpf.o')
+    if args.audio:
+        install(module_dir / 'usbscope_iso.ko', '/usbscope_iso.ko')
     init = tree / 'init'
     init.write_text('''#!/bin/busybox sh
 /bin/busybox --install -s /bin
@@ -75,7 +86,7 @@ reboot -f
     if args.live:
         init.write_text(init.read_text().replace('echo USBSCOPE_VM_PASS', '''
 mount -t 9p -o trans=virtio,version=9p2000.L artifacts /out || fail
-/usbscope --bpf-object /usbscope.bpf.o -w /out/live.pcapng --raw-output /out/live.usbraw --ready-file /tmp/live-ready --duration 6 --fail-on-loss &
+/usbscope --bpf-object /usbscope.bpf.o -w /out/live.pcapng --raw-output /out/live.usbraw --device-context /out/devices.json --iso-stats --ready-file /tmp/live-ready --duration 6 --fail-on-loss &
 capture=$!
 for i in $(seq 1 100); do
     test -f /tmp/live-ready && break
@@ -96,6 +107,13 @@ if wait $capture; then fail; fi
 grep -q 'capture contains lost or incomplete events' /out/loss.log || fail
 sync
 echo USBSCOPE_VM_PASS'''))
+    if args.audio:
+        init.write_text(init.read_text().replace('wait $capture || fail', '''
+insmod /usbscope_iso.ko || fail
+test "$(cat /sys/module/usbscope_iso/parameters/result)" = 0 || fail
+cat /sys/module/usbscope_iso/parameters/actual_lengths > /out/iso-lengths.txt
+cat /sys/module/usbscope_iso/parameters/frame_status > /out/iso-status.txt
+wait $capture || fail''', 1))
     init.chmod(0o755)
     # newc archive, generated without root or device nodes (devtmpfs supplies those).
     archive = work / 'initramfs.cpio'
@@ -114,6 +132,8 @@ echo USBSCOPE_VM_PASS'''))
         '-device', 'usb-storage,bus=xhci.0,drive=stick,port=1']
     if args.live:
         command += ['-virtfs', f'local,path={args.artifacts.resolve()},mount_tag=artifacts,security_model=mapped-xattr']
+    if args.audio:
+        command += ['-audiodev', 'driver=none,id=audio', '-device', 'usb-audio,bus=xhci.0,port=2,audiodev=audio']
     log_path = args.log.resolve()
     log_path.parent.mkdir(parents=True, exist_ok=True)
     print('Running QEMU; guest log:', log_path, flush=True)
@@ -128,4 +148,4 @@ echo USBSCOPE_VM_PASS'''))
         raise SystemExit('VM e2e failed')
     print('\n'.join(line for line in text.splitlines() if 'OBSERVED' in line or 'USBSCOPE_' in line))
     if args.live:
-        subprocess.run(['python3', str(ROOT / 'tests/vm/validate.py'), str(args.artifacts)], check=True)
+        subprocess.run(['python3', str(ROOT / 'tests/vm/validate.py'), str(args.artifacts)] + (['--audio'] if args.audio else []), check=True)

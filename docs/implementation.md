@@ -8,7 +8,7 @@ because it compiles. Hardware/VM coverage and known limitations are recorded her
 | P0.1 | Workspace, versioned ring ABI, reassembly, pcapng, CLI e2e | Complete |
 | P0.2 | Rust/C CO-RE build and VM eBPF smoke test | Complete |
 | P1 | Live S/C/E hooks, contiguous long payload, bus/device selection, loss accounting | Complete |
-| P2 | ISO/audio metadata and sparse payload, device context | Pending |
+| P2 | ISO/audio metadata, sparse payload, ISO statistics, initial device context | Complete |
 | P3 | Complete filter language, offline analysis, rotation and release checks | Pending |
 
 ## Invariants
@@ -72,3 +72,20 @@ Submission failures have a loaded fexit hook, but this suite has not yet forced
 an HCD enqueue failure. ISO, SG, real hardware DMA bounce paths, and aarch64 are
 not covered by this stage. The post-DMA completion hook uses the immediate
 caller address, rejecting unrelated and concurrent `usb_unanchor_urb` calls.
+
+## P2 validation
+
+Live audio e2e passed on Linux 6.6.142 and 6.8 using QEMU's USB audio device.
+A VM-only test driver submits one 137-frame ISO URB (usbfs itself caps these at
+128). Frames have distinct byte patterns, variable lengths, and 32+ byte gaps.
+All submission bytes and original offsets match; gaps contain zeroes, not the
+fixture's sentinel bytes. Completion lengths/status match independently exported
+driver results, including 46 zero-length completions. TShark sees all 137
+descriptors. Both full suites still pass the long bulk and ring-loss tests.
+
+`--iso-stats` reports completion/frame errors, bytes, empty frames, and observed
+URB completion gaps. `--device-context` saves a passive initial sysfs snapshot
+including raw descriptor bytes. It is not a hotplug/alternate-setting timeline
+and does not inject fabricated enumeration packets into Wireshark. Live ISO IN,
+UAC2/UAC3 feedback decoding, PCM/WAV reconstruction, and hardware timing remain
+unvalidated or unimplemented; synthetic sparse ISO IN coverage is separate.

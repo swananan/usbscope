@@ -93,6 +93,10 @@ pub fn decode_meta(b: &[u8]) -> Result<EventMeta> {
         m.transfer_type == 0 || m.iso_count == 0,
         "ISO descriptors on non-ISO event"
     );
+    ensure!(
+        m.payload_len <= m.requested_len,
+        "payload span exceeds URB buffer"
+    );
     Ok(m)
 }
 
@@ -196,6 +200,25 @@ impl Reassembler {
                 ensure!(body.len() == 16 && offset == 0, "invalid event end");
                 let pending = self.pending.remove(&id).unwrap();
                 let m = &pending.event.meta;
+                if m.transfer_type == 0 {
+                    let mut span = 0u64;
+                    for descriptor in &pending.event.iso {
+                        let end = u64::from(descriptor.offset) + u64::from(descriptor.length);
+                        ensure!(
+                            end <= u64::from(m.requested_len),
+                            "ISO descriptor outside URB buffer"
+                        );
+                        if descriptor.length != 0 {
+                            span = span.max(end);
+                        }
+                    }
+                    if m.has_data != 0 && pending.event.iso.len() as u64 == u64::from(m.iso_count) {
+                        ensure!(
+                            span == u64::from(m.payload_len),
+                            "ISO descriptors disagree with payload span"
+                        );
+                    }
+                }
                 let covers =
                     |start: u64, len: u64| {
                         len == 0
