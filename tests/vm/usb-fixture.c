@@ -9,6 +9,7 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <stdint.h>
+static int use_sg;
 
 static void save(const char *name, const void *data, size_t length)
 {
@@ -22,6 +23,17 @@ static void save(const char *name, const void *data, size_t length)
 
 static void bulk(int fd, unsigned endpoint, void *buffer, unsigned length)
 {
+    if (use_sg && length >= 65536) {
+        struct usbdevfs_urb urb = { .type = USBDEVFS_URB_TYPE_BULK,
+            .endpoint = endpoint, .buffer = buffer, .buffer_length = length };
+        struct usbdevfs_urb *done = 0;
+        if (ioctl(fd, USBDEVFS_SUBMITURB, &urb) || ioctl(fd, USBDEVFS_REAPURB, &done)
+            || done != &urb || urb.status || urb.actual_length != (int)length) {
+            fprintf(stderr, "async bulk length=%u actual=%d status=%d errno=%d\n", length, urb.actual_length, urb.status, errno);
+            exit(1);
+        }
+        return;
+    }
     struct usbdevfs_bulktransfer request = {
         .ep = endpoint, .len = length, .timeout = 5000, .data = buffer,
     };
@@ -55,6 +67,12 @@ static unsigned char scsi(int fd, unsigned char *cdb, unsigned cdb_len,
 
 static void storage(int fd)
 {
+    if (use_sg) {
+        unsigned capabilities = 0;
+        if (ioctl(fd, USBDEVFS_GET_CAPABILITIES, &capabilities) || !(capabilities & USBDEVFS_CAP_BULK_SCATTER_GATHER)) {
+            fprintf(stderr, "test controller does not support SG\n"); exit(1);
+        }
+    }
     unsigned interface = 0;
     if (ioctl(fd, USBDEVFS_CLAIMINTERFACE, &interface)) { perror("claim"); exit(1); }
     unsigned char ready[6] = {0};
@@ -95,6 +113,7 @@ static unsigned attribute(const char *base, const char *name, unsigned radix)
 
 int main(int argc, char **argv)
 {
+    use_sg = argc == 2 && !strcmp(argv[1], "--sg");
     glob_t devices;
     if (glob("/sys/bus/usb/devices/*/idVendor", 0, 0, &devices)) return 1;
     for (size_t i = 0; i < devices.gl_pathc; i++) {
@@ -120,7 +139,7 @@ int main(int argc, char **argv)
         fprintf(expected, "%u %u %04x %04x 18\n", bus, dev,
                 descriptor[8] | descriptor[9] << 8, descriptor[10] | descriptor[11] << 8);
         fclose(expected);
-        if (argc == 2 && !strcmp(argv[1], "--bulk")) {
+        if (argc == 2 && (!strcmp(argv[1], "--bulk") || use_sg)) {
             save("descriptor.bin", descriptor, sizeof(descriptor));
             storage(fd);
         }

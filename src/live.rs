@@ -31,7 +31,7 @@ pub struct Options<'a> {
 
 /// Fail closed if the post-DMA completion call site cannot be identified.
 /// In particular, redacted kallsyms addresses are never accepted.
-fn giveback_range() -> Result<(u64, u64)> {
+fn kernel_addresses() -> Result<(u64, u64, u64, u64)> {
     let symbols = fs::read_to_string("/proc/kallsyms").context("reading kernel symbols")?;
     let functions: Vec<_> = symbols
         .lines()
@@ -54,7 +54,28 @@ fn giveback_range() -> Result<(u64, u64)> {
         .filter_map(|(address, _)| (*address > start).then_some(*address))
         .min()
         .context("cannot determine completion function boundary")?;
-    Ok((start, end))
+    let variable = |name: &str| -> u64 {
+        if !cfg!(target_arch = "x86_64") {
+            return 0;
+        }
+        symbols
+            .lines()
+            .find_map(|line| {
+                let mut fields = line.split_whitespace();
+                let address = fields.next()?;
+                fields.next()?;
+                (fields.next()? == name)
+                    .then(|| u64::from_str_radix(address, 16).ok())
+                    .flatten()
+            })
+            .unwrap_or(0)
+    };
+    Ok((
+        start,
+        end,
+        variable("vmemmap_base"),
+        variable("page_offset_base"),
+    ))
 }
 
 fn epoch_offset() -> Result<u64> {
@@ -91,7 +112,7 @@ pub fn capture(
         ring_bytes.is_power_of_two() && ring_bytes >= page,
         "-B must specify a power-of-two number of KiB, at least one page"
     );
-    let (giveback_start, giveback_end) = giveback_range()?;
+    let (giveback_start, giveback_end, vmemmap_symbol, page_offset_symbol) = kernel_addresses()?;
     let btf = Btf::from_sys_fs().context("kernel BTF is required")?;
     let mut bpf = EbpfLoader::new()
         .map_max_entries("EVENTS", ring_bytes)
@@ -142,6 +163,8 @@ pub fn capture(
         epoch_offset_ns: epoch_offset()?,
         giveback_start,
         giveback_end,
+        vmemmap_symbol,
+        page_offset_symbol,
         bus: options.bus,
         device: options.device.map_or(u32::MAX, u32::from),
         enabled: 1,
@@ -216,7 +239,7 @@ pub fn capture(
         total.read_errors += cpu.read_errors;
         total.unsupported_buffers += cpu.unsupported_buffers;
         total.state_errors += cpu.state_errors;
-        total.unmatched_completions += cpu.unmatched_completions;
+        total.sg_events += cpu.sg_events;
     }
     // Drain records published immediately before detach.
     while let Some(item) = ring.next() {

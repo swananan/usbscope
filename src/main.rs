@@ -307,7 +307,7 @@ fn run(args: Args) -> Result<()> {
     let mut losses = stats.incomplete + stats.orphan_records;
     if let Some(stats) = kernel {
         eprintln!(
-            "kernel: {} submitted, {} completed, {} submit errors; {} ring losses, {} read errors, {} unsupported buffers, {} state errors; {} URBs still in flight at stop",
+            "kernel: {} submitted, {} completed, {} submit errors; {} ring losses, {} read errors, {} unsupported buffers, {} state errors; {} SG data events; {} URBs still in flight at stop",
             stats.submitted,
             stats.completed,
             stats.submit_errors,
@@ -315,6 +315,7 @@ fn run(args: Args) -> Result<()> {
             stats.read_errors,
             stats.unsupported_buffers,
             stats.state_errors,
+            stats.sg_events,
             stats
                 .submitted
                 .saturating_sub(stats.completed + stats.submit_errors)

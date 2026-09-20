@@ -10,15 +10,16 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser()
 parser.add_argument('--kernel', type=Path, default=ROOT / 'target/vm-kernel/arch/x86/boot/bzImage')
-parser.add_argument('--timeout', type=int, default=120)
+parser.add_argument('--timeout', type=int, default=300)
 parser.add_argument('--log', type=Path, default=ROOT / 'target/vm-e2e.log')
 parser.add_argument('--live', action='store_true', help='validate full payload capture through the CLI')
 parser.add_argument('--artifacts', type=Path, default=ROOT / 'target/vm-artifacts')
 parser.add_argument('--audio', action='store_true', help='include a 137-frame sparse ISO audio URB')
 parser.add_argument('--filters', action='store_true', help='compare live kernel prefiltering and exact userspace filtering')
+parser.add_argument('--sg', action='store_true', help='use asynchronous usbfs scatter-gather buffers for large URBs')
 args = parser.parse_args()
-if (args.audio or args.filters) and not args.live:
-    parser.error('--audio and --filters require --live')
+if (args.audio or args.filters or args.sg) and not args.live:
+    parser.error('--audio, --filters, and --sg require --live')
 subprocess.run(['cargo', 'build', '--example', 'probe-smoke'], cwd=ROOT, check=True)
 if args.live:
     subprocess.run(['cargo', 'build'], cwd=ROOT, check=True)
@@ -73,8 +74,9 @@ test -r /sys/kernel/btf/vmlinux || fail
 sleep 1
 /probe-smoke /usbscope.bpf.o &
 probe=$!
-for i in $(seq 1 100); do
+for i in $(seq 1 600); do
     test -f /tmp/probe-ready && break
+    kill -0 $probe 2>/dev/null || fail
     sleep 0.1
 done
 test -f /tmp/probe-ready || fail
@@ -89,8 +91,9 @@ reboot -f
 mount -t 9p -o trans=virtio,version=9p2000.L artifacts /out || fail
 /usbscope --bpf-object /usbscope.bpf.o -w /out/live.pcapng --raw-output /out/live.usbraw --device-context /out/devices.json --iso-stats --ready-file /tmp/live-ready --duration 6 --fail-on-loss &
 capture=$!
-for i in $(seq 1 100); do
+for i in $(seq 1 600); do
     test -f /tmp/live-ready && break
+    kill -0 $capture 2>/dev/null || fail
     sleep 0.1
 done
 test -f /tmp/live-ready || fail
@@ -98,8 +101,9 @@ test -f /tmp/live-ready || fail
 wait $capture || fail
 /usbscope --bpf-object /usbscope.bpf.o -B 4 -w /out/loss.pcapng --ready-file /tmp/loss-ready --duration 4 --fail-on-loss 2>/out/loss.log &
 capture=$!
-for i in $(seq 1 100); do
+for i in $(seq 1 600); do
     test -f /tmp/loss-ready && break
+    kill -0 $capture 2>/dev/null || fail
     sleep 0.1
 done
 test -f /tmp/loss-ready || fail
@@ -122,8 +126,9 @@ filter_capture() {
     expression=$2
     /usbscope --bpf-object /usbscope.bpf.o -w /out/$name.pcapng --ready-file /tmp/$name-ready --duration 3 --fail-on-loss "$expression" 2>/out/$name.log &
     capture=$!
-    for i in $(seq 1 100); do
+    for i in $(seq 1 600); do
         test -f /tmp/$name-ready && break
+        kill -0 $capture 2>/dev/null || fail
         sleep 0.1
     done
     test -f /tmp/$name-ready || fail
@@ -134,6 +139,8 @@ filter_capture filtered 'bulk and requested > 1000000 and event complete and lat
 filter_capture mixed 'bus 999 or payload contains 0x55534243'
 sync
 echo USBSCOPE_VM_PASS'''))
+    if args.sg:
+        init.write_text(init.read_text().replace('/usb-fixture --bulk', '/usb-fixture --sg'))
     init.chmod(0o755)
     # newc archive, generated without root or device nodes (devtmpfs supplies those).
     archive = work / 'initramfs.cpio'
@@ -146,7 +153,7 @@ echo USBSCOPE_VM_PASS'''))
         f.truncate(16 * 1024 * 1024)
     command = ['qemu-system-x86_64', '-accel', 'tcg', '-m', '512', '-smp', '2',
         '-kernel', str(args.kernel.resolve()), '-initrd', str(archive),
-        '-append', 'console=ttyS0 panic=-1 nokaslr', '-nographic', '-no-reboot',
+        '-append', 'console=ttyS0 panic=-1', '-nographic', '-no-reboot',
         '-monitor', 'none', '-nic', 'none', '-device', 'qemu-xhci,id=xhci',
         '-drive', f'if=none,id=stick,format=raw,file={disk}',
         '-device', 'usb-storage,bus=xhci.0,drive=stick,port=1']
@@ -166,6 +173,8 @@ echo USBSCOPE_VM_PASS'''))
     if run.returncode or 'USBSCOPE_VM_PASS' not in text or 'USBSCOPE_VM_FAIL' in text:
         print(text[-12000:])
         raise SystemExit('VM e2e failed')
+    if args.sg and '2 SG data events' not in text:
+        raise SystemExit('SG e2e did not exercise both kernel SG data paths')
     print('\n'.join(line for line in text.splitlines() if 'OBSERVED' in line or 'USBSCOPE_' in line))
     if args.live:
         subprocess.run(['python3', str(ROOT / 'tests/vm/validate.py'), str(args.artifacts)]

@@ -78,10 +78,33 @@ struct IsoContext {
     reserved: u32,
 }
 
+#[repr(C)]
+#[derive(Default)]
+struct SgSegment {
+    source: u64,
+    next: u64,
+    length: u32,
+    padding: u32,
+}
+
+#[repr(C)]
+struct SgContext {
+    next: u64,
+    vmemmap: u64,
+    page_offset: u64,
+    copy: *mut CopyContext,
+    remaining: u32,
+    segment_left: u32,
+    segments_left: u32,
+    padding: u32,
+}
+
 unsafe extern "C" {
     fn core_read_urb(address: u64, meta: *mut EventMeta, buffer: *mut u64, sg: *mut u32) -> i64;
     fn core_completion_status(address: u64, status: *mut i32) -> i64;
     fn core_read_iso(address: u64, index: u32, submission: u32, out: *mut IsoDescriptor) -> i64;
+    fn core_sg_start(address: u64, start: *mut u64) -> i64;
+    fn core_sg_segment(address: u64, vmemmap: u64, page_offset: u64, out: *mut SgSegment) -> i64;
 }
 
 #[inline(always)]
@@ -400,7 +423,11 @@ unsafe fn emit(address: u64, urb_id: u64, event_type: u8, status: i32) {
         copy.copied = iso.copy.copied;
         descriptors = iso.descriptors;
     } else if meta.payload_len != 0 {
-        if sg != 0 || buffer == 0 {
+        if sg != 0 {
+            unsafe {
+                copy_sg(address, sg, &mut copy);
+            }
+        } else if buffer == 0 {
             copy.reason = LOSS_UNSUPPORTED_BUFFER;
             count(5);
         } else {
@@ -435,6 +462,102 @@ unsafe fn emit(address: u64, urb_id: u64, event_type: u8, status: i32) {
         });
     }
     end.submit(0);
+}
+
+#[inline(always)]
+unsafe fn copy_sg(address: u64, segments: u32, copy: &mut CopyContext) {
+    count(7);
+    let Some(config) = CONFIG.get(0) else {
+        copy.reason = LOSS_READ;
+        return;
+    };
+    if config.vmemmap_symbol == 0 || config.page_offset_symbol == 0 {
+        copy.reason = LOSS_UNSUPPORTED_BUFFER;
+        count(5);
+        return;
+    }
+    let mut context = SgContext {
+        next: 0,
+        vmemmap: config.vmemmap_symbol,
+        page_offset: config.page_offset_symbol,
+        remaining: copy.total,
+        copy,
+        segment_left: 0,
+        segments_left: segments,
+        padding: 0,
+    };
+    if unsafe { core_sg_start(address, &mut context.next) } < 0 {
+        copy.reason = LOSS_READ;
+        count(4);
+        return;
+    }
+    // At most one extra short chunk per SG entry. This bounds work from the
+    // actual URB/SG lengths without imposing a packet snap length.
+    let iterations =
+        u64::from(segments) + (u64::from(copy.total) + CHUNK_SIZE as u64 - 1) / CHUNK_SIZE as u64;
+    if iterations > u64::from(u32::MAX) {
+        copy.reason = LOSS_READ;
+        count(4);
+        return;
+    }
+    let result = unsafe {
+        generated::bpf_loop(
+            iterations as u32,
+            sg_copy_segment as *mut c_void,
+            (&raw mut context).cast(),
+            0,
+        )
+    };
+    if result < 0 || (context.remaining != 0 && copy.reason == 0) {
+        copy.reason = LOSS_READ;
+        count(4);
+    }
+}
+
+unsafe extern "C" fn sg_copy_segment(_: u32, context: *mut SgContext) -> u64 {
+    let context = unsafe { &mut *context };
+    if context.remaining == 0 {
+        return 1;
+    }
+    let copy = unsafe { &mut *context.copy };
+    if context.segment_left == 0 {
+        let mut segment = core::mem::MaybeUninit::<SgSegment>::uninit();
+        if context.next == 0
+            || context.segments_left == 0
+            || unsafe {
+                core_sg_segment(
+                    context.next,
+                    context.vmemmap,
+                    context.page_offset,
+                    segment.as_mut_ptr(),
+                )
+            } < 0
+        {
+            copy.reason = LOSS_READ;
+            count(4);
+            return 1;
+        }
+        // The accessor initializes every field on success.
+        let segment = unsafe { segment.assume_init() };
+        context.next = segment.next;
+        context.segments_left -= 1;
+        context.segment_left = segment.length.min(context.remaining);
+        copy.source = segment.source;
+    }
+    let length = context.segment_left.min(CHUNK_SIZE as u32);
+    if length == 0 {
+        return 0;
+    }
+    copy.destination = copy.copied;
+    copy.reason = unsafe { copy_chunk::<CHUNK_SIZE>(copy, 0, length) };
+    if copy.reason != 0 {
+        return 1;
+    }
+    copy.copied += u64::from(length);
+    copy.source = copy.source.wrapping_add(u64::from(length));
+    context.segment_left -= length;
+    context.remaining = context.remaining.saturating_sub(length);
+    0
 }
 
 unsafe extern "C" fn iso_measure(index: u32, context: *mut IsoContext) -> u64 {

@@ -59,6 +59,9 @@ pub struct CaptureConfig {
     pub epoch_offset_ns: u64,
     pub giveback_start: u64,
     pub giveback_end: u64,
+    /// Addresses of x86_64 direct-map layout variables; zero disables SG.
+    pub vmemmap_symbol: u64,
+    pub page_offset_symbol: u64,
     /// Zero selects all buses; u32::MAX selects all device addresses.
     pub bus: u32,
     pub device: u32,
@@ -76,7 +79,7 @@ pub struct CaptureStats {
     pub read_errors: u64,
     pub unsupported_buffers: u64,
     pub state_errors: u64,
-    pub unmatched_completions: u64,
+    pub sg_events: u64,
 }
 
 #[cfg(feature = "user")]

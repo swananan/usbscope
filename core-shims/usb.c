@@ -20,6 +20,8 @@ struct usb_device {
 struct usb_endpoint_descriptor { u8 bEndpointAddress; u8 bmAttributes; } CORE;
 struct usb_host_endpoint { struct usb_endpoint_descriptor desc; } CORE;
 struct usb_iso_packet_descriptor { u32 offset; u32 length; u32 actual_length; i32 status; } CORE;
+struct page { u64 flags; } CORE;
+struct scatterlist { u64 page_link; u32 offset, length; } CORE;
 struct urb {
     struct usb_device *dev;
     struct usb_host_endpoint *ep;
@@ -35,6 +37,7 @@ struct urb {
     i32 interval;
     i32 error_count;
     i32 num_sgs;
+    struct scatterlist *sg;
     struct usb_iso_packet_descriptor iso_frame_desc[];
 } CORE;
 
@@ -136,5 +139,49 @@ long core_read_iso(u64 address, u32 index, u32 submission, struct iso_descriptor
     if (submission) READ(out->length, desc->length);
     else READ(out->length, desc->actual_length);
     out->padding = 0;
+    return 0;
+}
+
+struct sg_segment { u64 source, next; u32 length, padding; };
+
+long core_sg_start(u64 address, u64 *start)
+{
+    struct urb *urb = (void *)address;
+    struct scatterlist *sg = 0;
+    READ(sg, urb->sg);
+    *start = (u64)sg;
+    return 0;
+}
+
+/* x86_64 SPARSEMEM_VMEMMAP, 4 KiB base pages. Both layout bases come from
+ * runtime kernel variables, so KASLR and five-level paging need no constants.
+ * This is CPU virtual memory translation, never a DMA-address translation. */
+long core_sg_segment(u64 address, u64 vmemmap_symbol, u64 page_offset_symbol,
+                     struct sg_segment *out)
+{
+    struct scatterlist *sg = (void *)address;
+    u64 link = 0, vmemmap = 0, direct = 0;
+    u32 offset = 0;
+    READ(link, sg->page_link);
+    READ(offset, sg->offset);
+    READ(out->length, sg->length);
+    if ((link & 1) || !link) return -1;
+    if (probe_read(&vmemmap, 8, (void *)vmemmap_symbol) < 0 ||
+        probe_read(&direct, 8, (void *)page_offset_symbol) < 0) return -1;
+    u64 page = link & ~3ULL;
+    u32 page_size = __builtin_preserve_type_info(*(struct page *)0, 1);
+    if (!vmemmap || !direct || !page_size || page < vmemmap ||
+        (page - vmemmap) % page_size) return -1;
+    u64 pfn = (page - vmemmap) / page_size;
+    if (pfn >= (1ULL << 40)) return -1; /* x86 physical addresses are <=52 bits */
+    out->source = direct + (pfn << 12) + offset;
+    out->next = 0;
+    out->padding = 0;
+    if (!(link & 2)) {
+        u32 stride = __builtin_preserve_type_info(*(struct scatterlist *)0, 1);
+        struct scatterlist *next = (void *)(address + stride);
+        READ(link, next->page_link);
+        out->next = link & 1 ? link & ~3ULL : (u64)next;
+    }
     return 0;
 }

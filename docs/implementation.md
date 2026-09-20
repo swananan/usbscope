@@ -10,7 +10,8 @@ because it compiles. Hardware/VM coverage and known limitations are recorded her
 | P1 | Live S/C/E hooks, contiguous long payload, bus/device selection, loss accounting | Complete |
 | P2 | ISO/audio metadata, sparse payload, ISO statistics, initial device context | Complete |
 | P3.1 | USB filter language, safe kernel prefilter, archive analysis | Complete |
-| P3.2 | SG buffers, pcapng input, rotation and release checks | Pending |
+| P3.2 | x86_64 SG buffers and randomized-layout VM coverage | Complete |
+| P3.3 | pcapng input, rotation and release checks | Pending |
 
 ## Invariants
 
@@ -105,3 +106,19 @@ allowed exactly two large URBs into the kernel stream and selected their two
 completions. `bus 999 or payload contains 0x55534243` retained all nine input
 URBs and selected the three matching command submissions without false negatives.
 The full audio, payload, replay, TShark, and loss suites remain enabled.
+
+## P3.2 validation
+
+Both VM kernels now enable relocatable/randomized memory layouts and boot without
+`nokaslr`. Asynchronous usbfs transfers exercise SG lists rather than contiguous
+buffers. The full suites pass on both kernels, including byte-exact 2,097,664
+byte transfers in each direction; kernel counters assert two SG data events.
+The C shim uses runtime `vmemmap_base` and `page_offset_base` values, CO-RE sizes
+for `struct page` and `struct scatterlist`, and follows SG chain links. Copying
+uses one bounded helper loop sized from the actual payload and SG entry count.
+
+Supported SG translation is x86_64 SPARSEMEM_VMEMMAP with 4 KiB base pages and
+visible layout symbols. Other memory models, ISO SG buffers, device-only DMA
+memory, and inaccessible pages fail explicitly as unsupported/read loss. The
+suite exercises 129 contiguous SG entries; separately allocated chained SG tables
+are implemented but not yet exercised by this fixture.

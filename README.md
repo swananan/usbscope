@@ -61,7 +61,10 @@ error. This hook ordering is kernel-internal and requires regression coverage.
 At stop, new submissions are disabled, with a 200 ms completion drain. URBs
 still in flight at that boundary are reported separately from transport loss.
 
-Scatter-gather buffers are not supported at this stage; they are reported
+Bulk SG buffers are supported on x86_64 SPARSEMEM_VMEMMAP kernels exposing
+`vmemmap_base` and `page_offset_base`. Addresses and structure sizes are resolved
+at runtime; no fixed kernel layout or DMA-to-CPU address conversion is assumed.
+Unsupported memory models, ISO SG buffers, or unreadable memory are reported
 explicitly and make `--fail-on-loss` fail.
 
 ## Filters
@@ -110,6 +113,7 @@ python3 tests/vm/run.py
 python3 tests/vm/run.py --live
 python3 tests/vm/run.py --live --audio
 python3 tests/vm/run.py --live --audio --filters
+python3 tests/vm/run.py --live --audio --filters --sg
 ```
 
 The VM runner needs QEMU x86_64, a static BusyBox, GCC, cpio, and a Linux source
