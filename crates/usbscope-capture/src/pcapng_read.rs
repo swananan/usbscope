@@ -235,7 +235,7 @@ impl<R: Read> Reader<R> {
                     } else {
                         meta.actual_len = wire_len;
                         let request = self.requested.remove(&meta.urb_id);
-                        meta.requested_len = request.unwrap_or(wire_len.max(meta.payload_len));
+                        meta.requested_len = request.unwrap_or(0);
                         request.is_some()
                     };
                     let mut iso = Vec::new();
@@ -255,8 +255,13 @@ impl<R: Read> Reader<R> {
                                 padding: 0,
                             };
                             let end = u64::from(d.offset) + u64::from(d.length);
+                            // A capture can start at completion, or filtering/
+                            // rotation can remove its submission. ISO actual
+                            // length excludes gaps and says nothing about the
+                            // buffer extent, especially for empty tail frames.
                             ensure!(
-                                end <= u64::from(meta.requested_len),
+                                end <= u64::from(u32::MAX)
+                                    && (!requested_known || end <= u64::from(meta.requested_len)),
                                 "ISO descriptor outside URB buffer"
                             );
                             if meta.has_data != 0 && d.length != 0 {

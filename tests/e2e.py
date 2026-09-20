@@ -271,6 +271,52 @@ class CaptureE2E(unittest.TestCase):
         self.assertEqual(struct.unpack_from('<Q', parsed[0], 0)[0], 77)
         self.assertEqual(self.tshark(target, 'frame.time_epoch'), ['3.234567000'])
 
+    def test_pcapng_iso_without_submission_preserves_sparse_and_empty_frames(self):
+        descriptors = [(0, 0, 2, 0), (0, 14, 2, 0), (0, 48, 0, 0)]
+        for endpoint in [2, 0x82]:
+            with self.subTest(endpoint=endpoint):
+                incoming = endpoint & 0x80
+                records = [record(1, 1, meta(event='C', transfer=0, endpoint=endpoint,
+                    length=64, actual=4, payload=16 if incoming else 0,
+                    descriptors=3, status=0))]
+                records += [record(3, 1, struct.pack('<iIII', *d), i)
+                            for i, d in enumerate(descriptors)]
+                if incoming:
+                    records += [record(2, 1, b'AB'), record(2, 1, b'CD', 14)]
+                records.append(end(1, 4 if incoming else 0, 3))
+                source, _ = self.convert(records)
+                expected = source.read_bytes()
+                target = self.root / 'iso-replayed.pcapng'
+                result = subprocess.run([BINARY, '-r', str(source), '-w', str(target),
+                    '--fail-on-loss', '--iso-stats'], capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr.decode())
+                self.assertEqual(target.read_bytes(), expected)
+                self.assertIn(b'3 frames, 4 bytes', result.stderr)
+                self.assertIn(b'1 empty frames', result.stderr)
+                self.assertEqual(self.tshark(target, 'usb.iso.iso_off'), ['0,14,48'])
+                result = subprocess.run([BINARY, '-r', str(source), '-w', str(target),
+                    'not requested 64'], capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr.decode())
+                self.assertEqual(packets(target.read_bytes()), [], 'unknown requested length matched')
+
+    def test_pcapng_iso_still_checks_a_known_submission_buffer(self):
+        records = [record(1, 1, meta(urb=7, transfer=0, endpoint=0x82, length=64,
+                                   descriptors=1)),
+                   record(3, 1, struct.pack('<iIII', 0, 48, 2, 0)), end(1, descriptors=1),
+                   record(1, 2, meta(urb=7, event='C', transfer=0, endpoint=0x82,
+                                    length=64, actual=0, descriptors=1, status=0)),
+                   record(3, 2, struct.pack('<iIII', 0, 48, 0, 0)), end(2, descriptors=1)]
+        source, _ = self.convert(records)
+        corrupt = bytearray(source.read_bytes())
+        # Keep the submitted descriptor valid, but move the completion's empty
+        # frame past the 64-byte buffer known from its matching submission.
+        second = 48 + struct.unpack_from('<I', corrupt, 52)[0]
+        struct.pack_into('<I', corrupt, second + 28 + 64 + 4, 65)
+        source.write_bytes(corrupt)
+        result = subprocess.run([BINARY, '-r', str(source)], capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b'ISO descriptor outside URB buffer', result.stderr)
+
     def test_pcapng_malformed_lengths_and_snap_truncation(self):
         source, _ = self.convert([record(1, 1, meta(length=4, payload=4)), record(2, 1, b'abcd'), end(1, 4)])
         original = source.read_bytes()

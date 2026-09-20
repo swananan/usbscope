@@ -108,7 +108,9 @@ sudo usbscope -i usb1 -w audio.pcapng -G 60 --iso-stats
 not supported. Reading streams large payloads through temporary storage. Input
 snap truncation is reported as incomplete data. Standard USB pcapng lacks VID/PID;
 completion request lengths and latency also need an observed submission. Missing
-fields remain unknown to filters.
+fields remain unknown to filters. ISO completions can be read without their
+submissions, including sparse frames and empty tail frames; actual transferred
+bytes are not treated as the original buffer's extent.
 
 `-C` uses decimal megabytes; `-G` uses capture timestamps. Both rotate between
 whole events, so a large event can exceed the size target. Files are named
