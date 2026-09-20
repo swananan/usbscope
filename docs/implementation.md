@@ -16,6 +16,7 @@ because it compiles. Hardware/VM coverage and known limitations are recorded her
 | P4.1 | Native/cross arm64 builds and rootless VM capture e2e | Complete |
 | P4.2 | arm64 SG, 4 KiB/64 KiB pages, architecture/ABI guards | Complete |
 | P4.3 | Architecture-specific releases, twelve-job CI matrix, platform documentation | Complete locally; hosted CI pending |
+| P5.1 | ARM SG compatibility with the upstream 6.9+ memory layout | Complete |
 
 ## Invariants
 
@@ -244,3 +245,22 @@ workflow has not yet run. Reproduction instructions are in [platforms.md](platfo
 - Full-length capture does not guarantee lossless capture at every data rate.
   Ring capacity, disk space, temporary storage, and capture-format/reader limits
   remain resource constraints; errors and incomplete events are reported.
+
+## P5.1: newer ARM kernel layouts
+
+Upstream Linux 6.9 changed `VMEMMAP_START` and stopped rounding `sizeof(struct
+page)` up to a power of two when sizing that region. This preprocessor constant
+cannot be relocated through BTF. Userspace selects the upstream layout using the
+running release; the C shim still obtains the actual `struct page` size through
+CO-RE. The shared configuration grows to 72 bytes, so the existing BPF metadata
+check rejects older, incompatible objects. Vendor backports of this layout change
+under an older release number need separate validation.
+
+The same ARM BPF object passed SG/audio/filter/loss e2e and independent tcpdump
+comparison on 6.6.142/4 KiB and 6.18.52/64 KiB. The latter also passed the separate
+contiguous-buffer comparison. x86_64 6.6.142 with USB_MON disabled passed the full
+suite after the configuration ABI change. All normal captures reported zero loss.
+
+The kernel builder now clears competing ARM page-size and VA-width choices before
+selecting them, then verifies the resolved configuration. Newer kernels default
+to 52-bit VA; a job labeled VA48 must actually boot a VA48 kernel.

@@ -153,8 +153,8 @@ long core_sg_start(u64 address, u64 *start)
     return 0;
 }
 
-struct sg_memory { u64 vmemmap_symbol, page_offset_symbol; u32 page_shift, va_bits; };
-_Static_assert(sizeof(struct sg_memory) == 24, "Rust/C SG configuration ABI mismatch");
+struct sg_memory { u64 vmemmap_symbol, page_offset_symbol; u32 page_shift, va_bits, layout, padding; };
+_Static_assert(sizeof(struct sg_memory) == 32, "Rust/C SG configuration ABI mismatch");
 
 /* SPARSEMEM_VMEMMAP CPU virtual addresses, never DMA-address translation.
  * x86_64 obtains the mapping bases from runtime kernel variables.
@@ -177,17 +177,23 @@ long core_sg_segment(u64 address, const struct sg_memory *memory, struct sg_segm
     u32 bits = memory->va_bits;
     if ((shift != 12 && shift != 14 && shift != 16) || bits < 36 || bits > 52) return -1;
     if (!page_size || page_size > 4096) return -1;
-    u32 order = 0;
-    /* Kernel STRUCT_PAGE_MAX_SHIFT is ceil(log2(sizeof(struct page))). */
-    for (; order < 12; order++) {
-        if ((1U << order) >= page_size) break;
-    }
-    if (order >= shift) return -1;
-    vmemmap = 0ULL - (1ULL << (bits - shift + order));
     direct = 0ULL - (1ULL << bits);
-    u32 min_bits = bits > 48 ? 48 : bits;
+    u32 min_bits = bits > 48 ? (shift == 14 ? 47 : 48) : bits;
     u64 end = 0ULL - (1ULL << (min_bits - 1));
     max_pages = (end - direct) >> shift;
+    if (memory->layout == 1) { /* SG_ARM64_LEGACY: upstream before 6.9 */
+        u32 order = 0;
+        /* Kernel STRUCT_PAGE_MAX_SHIFT is ceil(log2(sizeof(struct page))). */
+        for (; order < 12; order++) {
+            if ((1U << order) >= page_size) break;
+        }
+        if (order >= shift) return -1;
+        vmemmap = 0ULL - (1ULL << (bits - shift + order));
+    } else if (memory->layout == 2) { /* SG_ARM64_COMPACT: upstream 6.9+ */
+        vmemmap = (0ULL - (1ULL << 30)) - max_pages * page_size;
+    } else {
+        return -1;
+    }
 #elif defined(USBSCOPE_X86_64)
     if (shift != 12 || !memory->vmemmap_symbol || !memory->page_offset_symbol) return -1;
     if (probe_read(&vmemmap, 8, (void *)memory->vmemmap_symbol) < 0 ||

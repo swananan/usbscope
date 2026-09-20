@@ -123,6 +123,7 @@ pub fn capture(
             page_offset_symbol,
             page_shift: 12,
             va_bits: 0,
+            ..SgMemory::default()
         }
     } else {
         SgMemory::default()

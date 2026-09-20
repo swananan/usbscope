@@ -15,6 +15,8 @@ pub const LOSS_READ: u32 = 2;
 pub const LOSS_UNSUPPORTED_BUFFER: u32 = 3;
 pub const MAX_KERNEL_PREDICATES: u32 = 64;
 pub const BPF_BUILD_MAGIC: [u8; 8] = *b"USBSBPF1";
+pub const SG_ARM64_LEGACY: u32 = 1;
+pub const SG_ARM64_COMPACT: u32 = 2;
 
 #[repr(C)]
 pub struct BpfBuildInfo {
@@ -32,6 +34,9 @@ pub struct SgMemory {
     /// Zero disables SG. arm64 additionally needs CONFIG_ARM64_VA_BITS.
     pub page_shift: u32,
     pub va_bits: u32,
+    /// arm64 vmemmap placement changed in upstream Linux 6.9.
+    pub layout: u32,
+    pub padding: u32,
 }
 
 #[repr(C)]

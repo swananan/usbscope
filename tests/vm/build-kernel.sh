@@ -42,7 +42,13 @@ if [ "$ARCH" = arm64 ]; then
         4K|16K|64K) ;;
         *) printf 'ARM64_PAGE_SIZE must be 4K, 16K, or 64K\n' >&2; exit 1 ;;
     esac
+    for page in 4K 16K 64K; do
+        "$config" --file "$build_dir/.config" --disable "ARM64_${page}_PAGES"
+    done
     "$config" --file "$build_dir/.config" --enable "ARM64_${ARM64_PAGE_SIZE:-4K}_PAGES"
+    for bits in 36 39 42 47 48 52; do
+        "$config" --file "$build_dir/.config" --disable "ARM64_VA_BITS_${bits}"
+    done
     "$config" --file "$build_dir/.config" --enable ARM64_VA_BITS_48
 fi
 case "${USBMON:-n}" in
@@ -58,6 +64,15 @@ for feature in BPF_SYSCALL BPF_JIT DEBUG_INFO_BTF KPROBES DYNAMIC_FTRACE USB IKC
         exit 1
     fi
 done
+if [ "$ARCH" = arm64 ]; then
+    for feature in "ARM64_${ARM64_PAGE_SIZE:-4K}_PAGES" SPARSEMEM_VMEMMAP; do
+        grep -q "^CONFIG_${feature}=y$" "$build_dir/.config" || {
+            printf 'Required arm64 feature was not enabled: CONFIG_%s\n' "$feature" >&2
+            exit 1
+        }
+    done
+    grep -q '^CONFIG_ARM64_VA_BITS=48$' "$build_dir/.config"
+fi
 if [ "${USBMON:-n}" = y ]; then
     grep -q '^CONFIG_USB_MON=y$' "$build_dir/.config"
 else
