@@ -18,6 +18,7 @@ because it compiles. Hardware/VM coverage and known limitations are recorded her
 | P4.3 | Architecture-specific releases, twelve-job CI matrix, platform documentation | Complete locally; hosted CI pending |
 | P5.1 | ARM SG compatibility with the upstream 6.9+ memory layout | Complete |
 | P5.2 | Pinned PR/full kernel CI, shared build artifacts, compact verified caches | Complete locally; hosted CI pending |
+| P5.3 | Verifier compatibility on 7.2 and final cross-kernel object regression | Complete |
 
 ## Invariants
 
@@ -288,3 +289,25 @@ SG/audio and contiguous tcpdump comparison through the same CI wrapper.
 Linux 6.12.110 passed on ARM/4 KiB with USB_MON=n and x86_64 with USB_MON=y;
 the latter also passed both tcpdump comparison suites. Rust tests, Clippy, format
 checks, and all 23 CLI/TShark e2e cases passed. The hosted workflow remains unrun.
+
+## P5.3: current stable verifier and final regression
+
+Linux 7.2.6 rejected the earlier object while checking a variable-length copy
+into a ring reservation: its callback analysis reached a 4 KiB reservation with
+a 16 KiB copy size. A volatile reload of the local length keeps the explicit
+per-reservation bounds check in the generated program, independent of LLVM's
+caller-branch folding. Reservation sizes and the full-length capture policy are
+unchanged; no payload truncation or allowed-failure job was added.
+
+After that change, one final BPF object per architecture passed full e2e across
+6.6.142, 6.8, 6.12.110, 6.18.52, and 7.2.6. The ten concrete configurations are
+listed in [ci.md](ci.md). Normal captures had zero ring/read/unsupported/state
+losses; forced-loss captures failed as expected. Every USB_MON=y case passed the
+SG/audio comparison and all ten corruption checks. The x86_64 6.12.110 and ARM
+6.18.52/7.2.6 cases also passed contiguous capture comparison and its eight
+corruption checks. Each direction retained the complete 2,097,664-byte payload,
+and ISO metadata retained all 137 frames despite the reference's 128-frame limit.
+
+Release and VM-helper archives were extracted into fresh directories. ELF
+architecture, checksums, executable modes, documentation, library symlinks, and
+complete guest dependency assembly were verified for both architectures.

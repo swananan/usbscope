@@ -45,7 +45,8 @@ live-capture privileges, kernel BTF, USB hardware, or a BPF object.
 Clang emits BTF CO-RE relocations for kernel field offsets and type sizes from
 the C accessors. `bpf-linker` links them into the Rust BPF object, and Aya applies
 the relocations using the running kernel's BTF at load time. For each supported
-architecture, the **same BPF object has passed e2e tests on Linux 6.6.142 and 6.8**.
+architecture, the **same BPF object has passed e2e tests on Linux 6.6.142, 6.8,
+6.12.110, 6.18.52, and 7.2.6**; the [CI guide](docs/ci.md) records the tested configurations.
 On compatible kernels of the target architecture, this avoids recompiling for
 each kernel layout. Capture hosts do not need kernel headers, Clang, or libbpf.
 Objects are specific to the CPU architecture because probe register conventions

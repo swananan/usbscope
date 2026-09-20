@@ -10,8 +10,8 @@ configuration ABI metadata before attaching anything.
 
 | Target | Kernel coverage | Bulk SG requirements |
 | --- | --- | --- |
-| x86_64 | 6.6.142 and 6.8, 4 KiB pages | SPARSEMEM_VMEMMAP; readable `vmemmap_base` and `page_offset_base` symbol addresses |
-| arm64 | 6.6.142 and 6.8, 4 KiB and 64 KiB pages | SPARSEMEM_VMEMMAP; readable running kernel configuration; tested with `CONFIG_ARM64_VA_BITS=48` |
+| x86_64 | 6.6.142, 6.8, 6.12.110, 6.18.52, 7.2.6; 4 KiB pages | SPARSEMEM_VMEMMAP; readable `vmemmap_base` and `page_offset_base` symbol addresses |
+| arm64 | 6.6.142/6.8 with 4 KiB and 64 KiB; 6.12.110 with 4 KiB; 6.18.52/7.2.6 with 64 KiB | SPARSEMEM_VMEMMAP; readable running kernel configuration; tested with `CONFIG_ARM64_VA_BITS=48` |
 
 arm64 reads `/proc/config.gz`, falling back to `/boot/config-$(uname -r)` if the
 proc file cannot be opened. It checks the configured page size against the

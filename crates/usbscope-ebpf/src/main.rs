@@ -666,6 +666,9 @@ unsafe extern "C" fn copy_callback(index: u32, context: *mut CopyContext) -> u64
 
 #[inline(always)]
 unsafe fn copy_chunk<const N: usize>(context: &CopyContext, offset: u64, length: u32) -> u32 {
+    // Keep a bound check for each reservation even if LLVM can infer the
+    // caller's branch bounds. Callback scalar tracking differs across kernels.
+    let length = unsafe { core::ptr::read_volatile(&length) };
     if length == 0 || length as usize > N {
         return LOSS_READ;
     }

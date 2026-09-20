@@ -118,5 +118,20 @@ still require a manifest update. Update this table and both READMEs with it.
 
 The hosted workflow has not yet run: this checkout has no Git remote configured.
 Local runs verify the workflow's scripts and QEMU test path; they do not establish
-that every one of the 36 hosted combinations has passed. Exact local evidence is
-recorded in [implementation.md](implementation.md).
+that every one of the 36 hosted combinations has passed. The final BPF objects,
+unchanged across kernels within each architecture, passed these ten local configurations:
+
+| Kernel | x86_64 | arm64 |
+| --- | --- | --- |
+| 6.6.142 | 4 KiB, USB_MON=n | 4 KiB, USB_MON=y |
+| 6.8 | 4 KiB, USB_MON=y | 64 KiB, USB_MON=y |
+| 6.12.110 | 4 KiB, USB_MON=y | 4 KiB, USB_MON=n |
+| 6.18.52 | 4 KiB, USB_MON=n | 64 KiB, USB_MON=y |
+| 7.2.6 | 4 KiB, USB_MON=n | 64 KiB, USB_MON=y |
+
+Every cell passed SG, audio, filters, replay, TShark, and loss checks. All `y`
+cells passed the independent SG/audio comparison. The 6.12.110 x86_64 and
+6.18.52/7.2.6 arm64 cases additionally passed the separate contiguous comparison.
+The final objects include fixes for the ARM 6.9+ vmemmap layout and the ring
+reservation bounds exposed by the 7.2 verifier. Exact evidence and remaining
+hardware/traffic limitations are recorded in [implementation.md](implementation.md).
