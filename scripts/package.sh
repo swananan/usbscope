@@ -1,6 +1,6 @@
 #!/bin/sh
 set -eu
-repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+repo_dir=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo_dir"
 capture_arch=${1:-$(uname -m)}
 case "$capture_arch" in
@@ -13,10 +13,10 @@ rust_target="$capture_arch-unknown-linux-gnu"
 if [ "$capture_arch" != "$(uname -m)" ]; then
     case "$capture_arch" in
         aarch64)
-            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=${CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER:-aarch64-linux-gnu-gcc}
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="${CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER:-aarch64-linux-gnu-gcc}"
             ;;
         x86_64)
-            export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=${CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER:-x86_64-linux-gnu-gcc}
+            export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="${CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER:-x86_64-linux-gnu-gcc}"
             ;;
     esac
 fi
@@ -25,7 +25,7 @@ scripts/build-ebpf.sh "$capture_arch"
 artifact_dir="$repo_dir/target/dist/usbscope-$platform"
 mkdir -p "$artifact_dir/docs"
 cp "target/$rust_target/release/usbscope" "target/$capture_arch/usbscope.bpf.o" README.md README.zh-CN.md LICENSE-MIT LICENSE-APACHE "$artifact_dir/"
-cp docs/filters.md docs/implementation.md docs/usbmon-comparison.md docs/platforms.md "$artifact_dir/docs/"
+cp docs/filters.md docs/implementation.md docs/usbmon-comparison.md docs/platforms.md docs/ci.md "$artifact_dir/docs/"
 (
     cd "$artifact_dir"
     sha256sum usbscope usbscope.bpf.o > SHA256SUMS

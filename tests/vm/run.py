@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import platform
 import shutil
+import shlex
 import struct
 import subprocess
 import tempfile
@@ -17,6 +18,11 @@ parser.add_argument('--arch', choices=['x86_64', 'aarch64'], default=platform.ma
 parser.add_argument('--kernel', type=Path)
 parser.add_argument('--bpf-object', type=Path)
 parser.add_argument('--binary', type=Path, help='capture CLI to install, for testing an extracted release')
+parser.add_argument('--probe-binary', type=Path, help='prebuilt probe-smoke for the guest architecture')
+parser.add_argument('--host-binary', type=Path, help='prebuilt native CLI for offline validation')
+parser.add_argument('--iso-module', type=Path, help='prebuilt ISO fixture for this exact guest kernel')
+parser.add_argument('--expected-kernel-release', help='fail if the guest boots a different kernel release')
+parser.add_argument('--expected-page-kib', type=int, choices=[4, 16, 64], help='assert the guest page size')
 parser.add_argument('--guest-root', type=Path,
                     help='guest userspace from prepare-guest.py; required for cross-architecture runs')
 parser.add_argument('--timeout', type=int, default=300)
@@ -54,24 +60,34 @@ module_flags = [f'ARCH={kernel_arch}']
 if cross:
     build_environment.setdefault(f'CARGO_TARGET_{target.upper().replace("-", "_")}_LINKER', compiler)
     module_flags += [f'CROSS_COMPILE={args.arch}-linux-gnu-']
-subprocess.run(['cargo', 'build', '--locked', '--example', 'probe-smoke'] + guest_flags,
-               cwd=ROOT, env=build_environment, check=True)
+if not args.probe_binary:
+    subprocess.run(['cargo', 'build', '--locked', '--example', 'probe-smoke'] + guest_flags,
+                   cwd=ROOT, env=build_environment, check=True)
+    args.probe_binary = guest_build / 'examples/probe-smoke'
 if args.live:
-    subprocess.run(['cargo', 'build', '--locked'] + guest_flags, cwd=ROOT, env=build_environment, check=True)
+    if not args.binary:
+        subprocess.run(['cargo', 'build', '--locked'] + guest_flags, cwd=ROOT, env=build_environment, check=True)
+        args.binary = guest_build / 'usbscope'
     # Offline validation runs on the host, even when capture runs on another CPU.
-    subprocess.run(['cargo', 'build', '--locked'] + build_flags, cwd=ROOT, check=True)
+    if not args.host_binary:
+        if cross:
+            subprocess.run(['cargo', 'build', '--locked'] + build_flags, cwd=ROOT, check=True)
+            args.host_binary = ROOT / f'target/{profile}/usbscope'
+        else:
+            args.host_binary = args.binary
     args.artifacts.mkdir(parents=True, exist_ok=True)
 with tempfile.TemporaryDirectory(prefix='usbscope-vm-', dir=ROOT / 'target') as temp:
     work = Path(temp)
     fixture = work / 'usb-fixture'
     subprocess.run([compiler, '-O2', '-Wall', '-Werror', '-o', str(fixture),
                     str(ROOT / 'tests/vm/usb-fixture.c')], check=True)
-    if args.audio:
+    if args.audio and not args.iso_module:
         module_dir = work / 'module'
         shutil.copytree(ROOT / 'tests/vm/kernel', module_dir)
         kernel_build = args.kernel.resolve().parents[3]
         subprocess.run(['make', '-s', '-C', str(kernel_build), '-j4', *module_flags, 'modules'], check=True)
         subprocess.run(['make', '-s', '-C', str(kernel_build), *module_flags, f'M={module_dir}', 'modules'], check=True)
+        args.iso_module = module_dir / 'usbscope_iso.ko'
     tree = work / 'root'
     tree.mkdir()
     for directory in ['bin', 'dev', 'proc', 'sys', 'tmp', 'run', 'out']:
@@ -79,10 +95,10 @@ with tempfile.TemporaryDirectory(prefix='usbscope-vm-', dir=ROOT / 'target') as 
 
     guest = Guest(tree, args.guest_root or Path('/'), args.arch)
     guest.binary(guest.find('busybox'), '/bin/busybox')
-    guest.binary(guest_build / 'examples/probe-smoke', '/probe-smoke')
+    guest.binary(args.probe_binary, '/probe-smoke')
     guest.binary(fixture, '/usb-fixture')
     if args.live:
-        guest.binary(args.binary or guest_build / 'usbscope', '/usbscope')
+        guest.binary(args.binary, '/usbscope')
     if args.compare_tcpdump:
         guest.binary(guest.find('tcpdump'), '/tcpdump')
         (tree / 'etc').mkdir()
@@ -105,7 +121,7 @@ with tempfile.TemporaryDirectory(prefix='usbscope-vm-', dir=ROOT / 'target') as 
         wrong_abi[offset + 12] ^= 8
         (tree / 'wrong-abi.bpf.o').write_bytes(wrong_abi)
     if args.audio:
-        guest.install(module_dir / 'usbscope_iso.ko', '/usbscope_iso.ko')
+        guest.install(args.iso_module, '/usbscope_iso.ko')
     init = tree / 'init'
     init.write_text('''#!/bin/busybox sh
 /bin/busybox --install -s /bin
@@ -131,6 +147,12 @@ cmp /tmp/probe-expected /tmp/probe-observed || fail
 echo USBSCOPE_VM_PASS
 reboot -f
 ''')
+    checks = ['uname -a']
+    if args.expected_kernel_release:
+        checks += [f'test "$(uname -r)" = {shlex.quote(args.expected_kernel_release)} || fail']
+    if args.expected_page_kib:
+        checks += [f'test "$(/usb-fixture --page-kib)" = {args.expected_page_kib} || fail']
+    init.write_text(init.read_text().replace('sleep 1\n', '\n'.join(checks) + '\nsleep 1\n', 1))
     if args.live:
         init.write_text(init.read_text().replace('/probe-smoke /usbscope.bpf.o &', '''
 if /usbscope --bpf-object /wrong-arch.bpf.o --duration 0.01 2>/tmp/arch.log; then fail; fi
@@ -257,7 +279,7 @@ wait $reference || fail''', 1)
     print('\n'.join(line for line in text.splitlines() if 'OBSERVED' in line or 'USBSCOPE_' in line))
     if args.live:
         subprocess.run(['python3', str(ROOT / 'tests/vm/validate.py'), str(args.artifacts)]
-                       + ['--binary', str(ROOT / f'target/{profile}/usbscope')]
+                       + ['--binary', str(args.host_binary)]
                        + (['--audio'] if args.audio else []) + (['--filters'] if args.filters else []), cwd=ROOT, check=True)
     if args.compare_tcpdump:
         subprocess.run(['python3', str(ROOT / 'tests/vm/compare.py'), str(args.artifacts)]

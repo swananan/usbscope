@@ -17,6 +17,7 @@ because it compiles. Hardware/VM coverage and known limitations are recorded her
 | P4.2 | arm64 SG, 4 KiB/64 KiB pages, architecture/ABI guards | Complete |
 | P4.3 | Architecture-specific releases, twelve-job CI matrix, platform documentation | Complete locally; hosted CI pending |
 | P5.1 | ARM SG compatibility with the upstream 6.9+ memory layout | Complete |
+| P5.2 | Pinned PR/full kernel CI, shared build artifacts, compact verified caches | Complete locally; hosted CI pending |
 
 ## Invariants
 
@@ -264,3 +265,26 @@ suite after the configuration ABI change. All normal captures reported zero loss
 The kernel builder now clears competing ARM page-size and VA-width choices before
 selecting them, then verifies the resolved configuration. Newer kernels default
 to 52-bit VA; a job labeled VA48 must actually boot a VA48 kernel.
+
+## P5.2: regular kernel matrix
+
+The [CI guide](ci.md) defines 12 PR/main jobs and 36 nightly/full jobs. Each
+architecture is built once; all kernel jobs consume the same release and probe
+artifacts. The guest runner accepts prebuilt smoke programs and ISO modules, and
+asserts the booted release and page size as well as USB_MON and BTF availability.
+Kernel caches contain only the boot image, fixture module, config, and checked
+metadata. SHA-256-pinned sources, exact cache identities, toolchain fingerprints,
+bounded download retries, and an official fallback mirror make failures reproducible.
+
+Eight CI contract tests cover matrix completeness, invalid pins, cache identity,
+corruption, mismatched config, rejected unverified sources, and download fallback.
+Actionlint with ShellCheck passes, including all shell helpers. Negative checks
+confirmed the aggregate status rejects failed/skipped/cancelled jobs and that
+logging through `tee` preserves failure through the explicit Bash `pipefail` mode.
+
+The exact cached-bundle path passed full x86_64 6.18.52 e2e with Cargo, Clang,
+bpf-linker, and make replaced by failing stubs. ARM 6.18.52/64 KiB passed both
+SG/audio and contiguous tcpdump comparison through the same CI wrapper.
+Linux 6.12.110 passed on ARM/4 KiB with USB_MON=n and x86_64 with USB_MON=y;
+the latter also passed both tcpdump comparison suites. Rust tests, Clippy, format
+checks, and all 23 CLI/TShark e2e cases passed. The hosted workflow remains unrun.

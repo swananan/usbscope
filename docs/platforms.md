@@ -18,6 +18,11 @@ proc file cannot be opened. It checks the configured page size against the
 running system's page size. The C accessor combines these settings with CO-RE
 `sizeof(struct page)` to calculate the linear mapping, following the
 [arm64 kernel memory definitions](https://github.com/torvalds/linux/blob/v6.8/arch/arm64/include/asm/memory.h).
+Upstream [Linux 6.9 changed vmemmap placement](https://github.com/torvalds/linux/commit/32697ff38287bb9f6c7ee1b04656a677b62496a6).
+The loader selects the old/new formula from the running release, because these
+preprocessor constants are absent from BTF. Vendor backports of that change under
+older release numbers require separate validation. Additional tested kernels and
+page sizes are recorded in the [CI guide](ci.md).
 No kernel headers or compiler are needed on a capture host. Missing/unsupported
 configuration disables SG capture; affected transfers are explicitly reported
 as incomplete, and `--fail-on-loss` fails. Contiguous-buffer capture remains
@@ -92,8 +97,9 @@ an extracted release, pass `--binary /path/to/usbscope` and
 
 ## Regular regression coverage
 
-The VM workflow defines twelve jobs: x86_64/4 KiB, arm64/4 KiB, and arm64/64 KiB,
-each with Linux 6.6.142 and 6.8 and USB_MON disabled/enabled. ARM jobs run on
+The VM workflow defines 12 PR/main jobs and 36 nightly/full jobs across
+x86_64/4 KiB, arm64/4 KiB, and arm64/64 KiB, with USB_MON disabled/enabled.
+The [CI guide](ci.md) lists the pinned kernels and reproduction commands. ARM jobs run on
 x86_64 hosts using the same cross-build and rootless QEMU path tested locally.
 They exercise packaged binaries, control and bulk traffic, SG buffers, 137
 sparse ISO frames, filters, full 2,097,664-byte payloads, and strict loss handling.
@@ -105,4 +111,6 @@ attachment, replays raw archives inside the guest, and compares guest/host
 pcapng filtering byte for byte. USB_MON-enabled jobs additionally compare against
 tcpdump and run the corrupted-capture checks, with separate contiguous-buffer
 and SG/audio cases. Local results are recorded in [implementation.md](implementation.md);
-the expanded hosted workflow has not yet been run.
+the expanded hosted workflow has not yet been run. Each architecture's packaged
+CLI and BPF object are reused across all kernels; cached kernel bundles contain
+the matching ISO fixture, so test jobs do not rebuild the BPF object or CLI.

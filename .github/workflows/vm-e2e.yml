@@ -3,102 +3,200 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: '17 3 * * *'
   workflow_dispatch:
+    inputs:
+      profile:
+        description: Kernel matrix to run
+        type: choice
+        options: [full, pr]
+        default: full
 permissions:
   contents: read
+defaults:
+  run:
+    shell: bash
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  CARGO_TERM_COLOR: always
+  RUSTUP_TOOLCHAIN: 1.98.1
 jobs:
+  matrix:
+    runs-on: ubuntu-24.04
+    outputs:
+      kernels: ${{ steps.matrix.outputs.kernels }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Select pinned kernels
+        id: matrix
+        env:
+          EVENT: ${{ github.event_name }}
+          REQUESTED_PROFILE: ${{ inputs.profile }}
+        run: |
+          profile='pr'
+          if [[ "$EVENT" = schedule ]]; then profile='full'; fi
+          if [[ "$EVENT" = workflow_dispatch ]]; then profile="$REQUESTED_PROFILE"; fi
+          python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
+          kernels=$(python3 scripts/ci/matrix.py --profile "$profile")
+          printf 'kernels=%s\n' "$kernels" >> "$GITHUB_OUTPUT"
+          printf 'Matrix profile: **%s**\n\n    %s\n' "$profile" "$kernels" >> "$GITHUB_STEP_SUMMARY"
+
+  userspace:
+    name: build / ${{ matrix.arch }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+    env:
+      CAPTURE_ARCH: ${{ matrix.arch }}
+      BPF_CLANG: clang-18
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.98.1
+        with:
+          targets: ${{ matrix.arch }}-unknown-linux-gnu
+      - uses: dtolnay/rust-toolchain@nightly-2025-12-01
+        with:
+          components: rust-src
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: vm-build-${{ matrix.arch }}
+          save-if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+      - uses: actions/cache/restore@v6
+        id: linker
+        with:
+          path: ~/.cargo/bin/bpf-linker
+          key: bpf-linker-${{ runner.os }}-${{ runner.arch }}-nightly-2025-12-01-0.9.15
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          packages=(clang-18 llvm-18 build-essential)
+          if [[ "$CAPTURE_ARCH" = aarch64 ]]; then packages+=(gcc-aarch64-linux-gnu ubuntu-keyring); fi
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"
+      - name: Install pinned BPF linker
+        if: steps.linker.outputs.cache-hit != 'true'
+        run: cargo +nightly-2025-12-01 install bpf-linker --version 0.9.15 --locked
+      - uses: actions/cache/save@v6
+        if: steps.linker.outputs.cache-hit != 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        with:
+          path: ~/.cargo/bin/bpf-linker
+          key: ${{ steps.linker.outputs.cache-primary-key }}
+      - name: Build the release and VM helpers once
+        run: scripts/ci/build-userspace.sh "$CAPTURE_ARCH"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: userspace-${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            target/dist/usbscope-${{ matrix.arch }}-linux.tar.gz
+            target/dist/vm-tools-${{ matrix.arch }}.tar.gz
+
   kernel:
-    name: ${{ matrix.target.arch }} / ${{ matrix.target.pages }} / Linux ${{ matrix.kernel }} / USB_MON=${{ matrix.usbmon }}
+    needs: [matrix, userspace]
+    name: ${{ matrix.arch }} / ${{ matrix.pages }} / Linux ${{ matrix.kernel }} / USB_MON=${{ matrix.usbmon }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      matrix:
-        kernel: ['6.6.142', '6.8']
-        usbmon: ['n', 'y']
-        target:
-          - {arch: x86_64, kernel_arch: x86, pages: 4K}
-          - {arch: aarch64, kernel_arch: arm64, pages: 4K}
-          - {arch: aarch64, kernel_arch: arm64, pages: 64K}
+      max-parallel: 6
+      matrix: ${{ fromJSON(needs.matrix.outputs.kernels) }}
     env:
-      CAPTURE_ARCH: ${{ matrix.target.arch }}
+      CAPTURE_ARCH: ${{ matrix.arch }}
+      KERNEL_VERSION: ${{ matrix.kernel }}
+      PAGE_SIZE: ${{ matrix.pages }}
+      USBMON: ${{ matrix.usbmon }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.98.1
-        with:
-          components: rustfmt, clippy
-      - uses: dtolnay/rust-toolchain@nightly-2025-12-01
-        with:
-          components: rust-src
-      - name: Install build and VM tools
+      - uses: actions/checkout@v7
+      - name: Install kernel and VM tools
+        id: toolchain
         run: |
           sudo apt-get update
-          vm_packages=(qemu-system-x86)
-          if [ "$CAPTURE_ARCH" = aarch64 ]; then
-            vm_packages=(qemu-system-arm gcc-aarch64-linux-gnu)
+          packages=(qemu-system-x86)
+          compiler=gcc
+          linker=ld
+          if [[ "$CAPTURE_ARCH" = aarch64 ]]; then
+            packages=(qemu-system-arm gcc-aarch64-linux-gnu)
+            compiler=aarch64-linux-gnu-gcc
+            linker=aarch64-linux-gnu-ld
           fi
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y clang-18 llvm-18 "${vm_packages[@]}" busybox-static cpio tshark tcpdump build-essential flex bison bc libelf-dev libssl-dev dwarves
-          cargo +nightly-2025-12-01 install bpf-linker --version 0.9.15 --locked
-      - name: Build architecture-specific release and guest userspace
-        env:
-          BPF_CLANG: clang-18
-          RUSTUP_TOOLCHAIN: 1.98.1
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}" busybox-static cpio tshark tcpdump build-essential flex bison bc libelf-dev libssl-dev dwarves
+          fingerprint=$({ gcc --version; "$compiler" --version; "$linker" --version; pahole --version; } | sha256sum | cut -d ' ' -f 1)
+          printf 'fingerprint=%s\n' "$fingerprint" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v8
+        with:
+          name: userspace-${{ matrix.arch }}
+          path: target/ci/downloads
+      - uses: actions/download-artifact@v8
+        if: matrix.arch != 'x86_64'
+        with:
+          name: userspace-x86_64
+          path: target/ci/downloads
+      - name: Extract the exact build artifacts
         run: |
-          rustup target add "$CAPTURE_ARCH-unknown-linux-gnu"
-          scripts/package.sh "$CAPTURE_ARCH"
-          if [ "$CAPTURE_ARCH" = aarch64 ]; then
-            python3 tests/vm/prepare-guest.py --arch aarch64
-          fi
-      - uses: actions/cache@v4
+          mkdir -p target/dist "target/ci/userspace/$CAPTURE_ARCH"
+          for archive in target/ci/downloads/usbscope-*-linux.tar.gz; do
+            tar -xzf "$archive" -C target/dist
+          done
+          tar -xzf "target/ci/downloads/vm-tools-$CAPTURE_ARCH.tar.gz" -C "target/ci/userspace/$CAPTURE_ARCH"
+      - uses: actions/cache/restore@v6
         id: kernel-cache
         with:
-          path: |
-            target/linux-source
-            target/vm-kernel
-          key: ${{ matrix.target.arch }}-${{ matrix.target.pages }}-usbmon-${{ matrix.usbmon }}-${{ runner.os }}-${{ matrix.kernel }}-${{ hashFiles('tests/vm/build-kernel.sh') }}
-      - name: Build kernel with CONFIG_USB_MON=${{ matrix.usbmon }}
+          path: target/ci/kernel
+          key: kernel-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.arch }}-${{ matrix.pages }}-${{ matrix.kernel }}-${{ matrix.usbmon }}-${{ matrix.sha256 }}-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('tests/vm/build-kernel.sh', 'tests/vm/kernel/**', 'scripts/ci/kernel.py') }}
+      - name: Build the pinned kernel and ISO module
         if: steps.kernel-cache.outputs.cache-hit != 'true'
-        env:
-          KERNEL_VERSION: ${{ matrix.kernel }}
-          USBMON: ${{ matrix.usbmon }}
-          ARCH: ${{ matrix.target.kernel_arch }}
-          ARM64_PAGE_SIZE: ${{ matrix.target.pages }}
         run: |
-          mkdir -p target/linux-source
-          curl --fail --location --retry 3 "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${KERNEL_VERSION}.tar.xz" -o target/linux.tar.xz
-          tar -xf target/linux.tar.xz --strip-components=1 -C target/linux-source
-          JOBS=4 tests/vm/build-kernel.sh target/linux-source
-      - name: Real USB capture, TShark, ISO, filters, SG, and forced loss
-        env:
-          RUSTUP_TOOLCHAIN: 1.98.1
-          USBMON: ${{ matrix.usbmon }}
+          mkdir -p target/ci
+          JOBS=4 python3 scripts/ci/kernel.py build --version "$KERNEL_VERSION" \
+            --arch "$CAPTURE_ARCH" --pages "$PAGE_SIZE" --usbmon "$USBMON" 2>&1 | tee target/ci/kernel-build.log
+      - name: Verify kernel cache identity and checksums
         run: |
-          extra=()
-          if [ "$CAPTURE_ARCH" = aarch64 ]; then
-            extra+=(--guest-root target/vm-guest/aarch64)
-          fi
-          if [ "$USBMON" = y ]; then extra+=(--compare-tcpdump); fi
-          python3 tests/vm/run.py --arch "$CAPTURE_ARCH" --live --audio --filters --sg --release \
-            --binary "target/dist/usbscope-$CAPTURE_ARCH-linux/usbscope" \
-            --bpf-object "target/dist/usbscope-$CAPTURE_ARCH-linux/usbscope.bpf.o" "${extra[@]}"
-      - name: Compare contiguous bulk buffers
-        if: matrix.usbmon == 'y'
-        env:
-          RUSTUP_TOOLCHAIN: 1.98.1
+          python3 scripts/ci/kernel.py verify --version "$KERNEL_VERSION" \
+            --arch "$CAPTURE_ARCH" --pages "$PAGE_SIZE" --usbmon "$USBMON"
+      - uses: actions/cache/save@v6
+        if: steps.kernel-cache.outputs.cache-hit != 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        with:
+          path: target/ci/kernel
+          key: ${{ steps.kernel-cache.outputs.cache-primary-key }}
+      - name: Full USB e2e and independent tcpdump comparison
         run: |
-          extra=()
-          if [ "$CAPTURE_ARCH" = aarch64 ]; then
-            extra+=(--guest-root target/vm-guest/aarch64)
-          fi
-          python3 tests/vm/run.py --arch "$CAPTURE_ARCH" --live --release --compare-tcpdump \
-            --binary "target/dist/usbscope-$CAPTURE_ARCH-linux/usbscope" \
-            --bpf-object "target/dist/usbscope-$CAPTURE_ARCH-linux/usbscope.bpf.o" "${extra[@]}" \
-            --log target/vm-contiguous.log --artifacts target/vm-artifacts/contiguous
-      - uses: actions/upload-artifact@v4
+          scripts/ci/run-vm.sh "$CAPTURE_ARCH" "$KERNEL_VERSION" "$PAGE_SIZE" "$USBMON" 2>&1 | tee target/ci/test.log
+      - name: Record the tested object and kernel
+        if: always()
+        run: |
+          {
+            printf '```\n'
+            cat "target/dist/usbscope-$CAPTURE_ARCH-linux/SHA256SUMS" || true
+            cat target/ci/kernel/metadata.json || true
+            printf '\n```\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: vm-e2e-${{ matrix.target.arch }}-${{ matrix.target.pages }}-${{ matrix.kernel }}-usbmon-${{ matrix.usbmon }}
+          name: vm-e2e-${{ matrix.arch }}-${{ matrix.pages }}-${{ matrix.kernel }}-usbmon-${{ matrix.usbmon }}
+          retention-days: 7
+          include-hidden-files: true
           path: |
-            target/vm-e2e.log
-            target/vm-contiguous.log
-            target/vm-artifacts
+            target/ci/results
+            target/ci/test.log
+            target/ci/kernel-build.log
+            target/ci/kernel/config
+            target/ci/kernel/metadata.json
+            target/ci/kernel-work/build-*/.config
+
+  check:
+    name: kernel-e2e
+    if: always()
+    needs: [matrix, userspace, kernel]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every matrix entry to pass
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: jq --exit-status 'length > 0 and all(.[]; . == "success")' <<< "$RESULTS"

@@ -80,9 +80,10 @@ the kernel matrix or reference collector.
 
 ## Regression coverage and artifacts
 
-GitHub Actions defines Linux 6.6.142 and 6.8 with USB_MON both disabled and enabled,
-across x86_64, arm64/4 KiB, and arm64/64 KiB: twelve jobs on pull requests, pushes
-to `main`, and manual dispatch. The expanded hosted workflow has not yet run. The enabled
+GitHub Actions uses [pinned kernel profiles](ci.md) with USB_MON both disabled and enabled,
+across x86_64, arm64/4 KiB, and arm64/64 KiB: 12 jobs on pull requests and pushes
+to `main`, and 36 in the nightly/full profile. Manual dispatch selects either
+profile and defaults to full. The expanded hosted workflow has not yet run. The enabled
 jobs require the tcpdump comparison; they do not skip it if a tool is missing.
 Both configurations retain the full original live suite.
 Enabled jobs also run a second comparison without `--sg` or `--audio`, covering

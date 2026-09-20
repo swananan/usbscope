@@ -19,10 +19,11 @@ program requires [`bpf_loop`](https://github.com/torvalds/linux/blob/v5.17/kerne
 Earlier upstream kernels need a backport of that helper. Helper availability
 alone is insufficient to establish compatibility with this program.
 
-**Minimum validated kernel: Linux 6.6.142.** The current e2e matrix covers
-**6.6.142 and 6.8 on little-endian x86_64 and arm64**, with 4 KiB and 64 KiB
-pages on arm64. Compatibility with other versions,
-including 5.17 through earlier 6.6 releases and newer kernels, remains unverified.
+**Minimum validated kernel: Linux 6.6.142.** Tested platforms are
+**little-endian x86_64 and arm64**, including 4 KiB and 64 KiB pages on arm64.
+See the [CI guide](docs/ci.md) for the kernel matrix and
+the exact configurations validated locally. Versions outside those results,
+including 5.17 through earlier 6.6 releases, remain unverified.
 Use the validated versions as the current deployment baseline and check the
 following requirements for live capture:
 
@@ -253,13 +254,17 @@ enabled and run with `--compare-tcpdump`. The [comparison guide](docs/usbmon-com
 explains synchronization, field/payload matching, and explicit handling of
 usbmon/libpcap truncation. It also documents the negative tests for the checker.
 
-GitHub Actions runs userspace checks and defines a twelve-job VM matrix:
-x86_64, arm64/4 KiB, and arm64/64 KiB, each with 6.6.142 and 6.8 and USB_MON
-disabled and enabled. The enabled jobs add
-independent tcpdump capture comparison, including separate contiguous bulk runs.
-The comparison suites have passed locally on both architectures and kernels; the hosted workflow
-has not yet been run. The current validation boundaries are listed under
-[usage limits](#current-usage-limits).
+GitHub Actions runs userspace checks and a tiered kernel matrix. PRs and pushes
+to `main` run **12 VM jobs**: 6.6.142 and 6.18.52, each on x86_64, arm64/4 KiB,
+and arm64/64 KiB, with USB_MON disabled and enabled. Nightly and default manual
+runs execute **36 jobs**, adding 6.6.157, 6.8, 6.12.110, and 7.2.6. Every enabled
+job requires independent tcpdump comparison for both SG/audio and contiguous
+bulk buffers. Each architecture builds its release and BPF object once for all
+kernels. The stable `kernel-e2e` check requires every selected job to pass.
+
+The [CI guide](docs/ci.md) explains version pins, compact kernel caches, artifacts,
+local reproduction, and recorded results. The hosted workflow has not yet been
+run. The current validation boundaries remain listed under [usage limits](#current-usage-limits).
 
 ## License
 
