@@ -8,6 +8,80 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include <stdint.h>
+
+static void save(const char *name, const void *data, size_t length)
+{
+    char path[128];
+    snprintf(path, sizeof(path), "/out/%s", name);
+    FILE *file = fopen(path, "wb");
+    if (!file || fwrite(data, 1, length, file) != length || fclose(file)) {
+        perror(path); exit(1);
+    }
+}
+
+static void bulk(int fd, unsigned endpoint, void *buffer, unsigned length)
+{
+    struct usbdevfs_bulktransfer request = {
+        .ep = endpoint, .len = length, .timeout = 5000, .data = buffer,
+    };
+    int result = ioctl(fd, USBDEVFS_BULK, &request);
+    if (result != (int)length) {
+        fprintf(stderr, "bulk ep=%02x length=%u result=%d errno=%d\n", endpoint, length, result, errno);
+        exit(1);
+    }
+}
+
+static unsigned char scsi(int fd, unsigned char *cdb, unsigned cdb_len,
+                          void *data, unsigned length, int in)
+{
+    static uint32_t tag;
+    unsigned char cbw[31] = {'U', 'S', 'B', 'C'};
+    ++tag;
+    memcpy(cbw + 4, &tag, 4);
+    memcpy(cbw + 8, &length, 4);
+    cbw[12] = in ? 0x80 : 0;
+    cbw[14] = cdb_len;
+    memcpy(cbw + 15, cdb, cdb_len);
+    bulk(fd, 2, cbw, sizeof(cbw));
+    if (length) bulk(fd, in ? 0x81 : 2, data, length);
+    unsigned char csw[13];
+    bulk(fd, 0x81, csw, sizeof(csw));
+    if (memcmp(csw, "USBS", 4) || memcmp(csw + 4, &tag, 4)) {
+        fprintf(stderr, "invalid command status wrapper\n"); exit(1);
+    }
+    return csw[12];
+}
+
+static void storage(int fd)
+{
+    unsigned interface = 0;
+    if (ioctl(fd, USBDEVFS_CLAIMINTERFACE, &interface)) { perror("claim"); exit(1); }
+    unsigned char ready[6] = {0};
+    if (scsi(fd, ready, sizeof(ready), 0, 0, 0)) {
+        unsigned char sense[6] = {3, 0, 0, 0, 18, 0}, response[18];
+        scsi(fd, sense, sizeof(sense), response, sizeof(response), 1);
+        if (scsi(fd, ready, sizeof(ready), 0, 0, 0)) { fprintf(stderr, "disk not ready\n"); exit(1); }
+    }
+    // One contiguous URB each way, larger than the archive spool threshold.
+    enum { LENGTH = 2 * 1024 * 1024 + 512, BLOCKS = LENGTH / 512 };
+    unsigned char *out = malloc(LENGTH), *in = malloc(LENGTH);
+    if (!out || !in) exit(1);
+    for (unsigned i = 0; i < LENGTH; ++i) out[i] = (i * 37 + 11) % 251;
+    unsigned char write10[10] = {0x2a, 0, 0, 0, 0, 8, 0, BLOCKS >> 8, BLOCKS & 255, 0};
+    unsigned char read10[10];
+    memcpy(read10, write10, 10);
+    read10[0] = 0x28;
+    if (scsi(fd, write10, 10, out, LENGTH, 0) || scsi(fd, read10, 10, in, LENGTH, 1)) {
+        fprintf(stderr, "SCSI command failed\n"); exit(1);
+    }
+    if (memcmp(in, out, LENGTH)) { fprintf(stderr, "USB data mismatch\n"); exit(1); }
+    save("bulk.bin", in, LENGTH);
+    free(out);
+    free(in);
+    ioctl(fd, USBDEVFS_RELEASEINTERFACE, &interface);
+    printf("USB_BULK_BYTES=%u\n", LENGTH);
+}
 
 static unsigned attribute(const char *base, const char *name, unsigned radix)
 {
@@ -19,7 +93,7 @@ static unsigned attribute(const char *base, const char *name, unsigned radix)
     return strtoul(text, 0, radix);
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
     glob_t devices;
     if (glob("/sys/bus/usb/devices/*/idVendor", 0, 0, &devices)) return 1;
@@ -45,6 +119,10 @@ int main(void)
         fprintf(expected, "%u %u %04x %04x 18\n", bus, dev,
                 descriptor[8] | descriptor[9] << 8, descriptor[10] | descriptor[11] << 8);
         fclose(expected);
+        if (argc == 2 && !strcmp(argv[1], "--bulk")) {
+            save("descriptor.bin", descriptor, sizeof(descriptor));
+            storage(fd);
+        }
         close(fd);
         globfree(&devices);
         return 0;

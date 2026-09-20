@@ -392,6 +392,7 @@ dependencies = [
  "anyhow",
  "aya",
  "clap",
+ "libc",
  "usbscope-capture",
  "usbscope-common",
 ]
@@ -408,6 +409,9 @@ dependencies = [
 [[package]]
 name = "usbscope-common"
 version = "0.1.0"
+dependencies = [
+ "aya",
+]
 
 [[package]]
 name = "utf8parse"

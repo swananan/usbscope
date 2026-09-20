@@ -1,6 +1,14 @@
 use std::{env, path::PathBuf, process::Command};
 
 fn main() {
+    println!("cargo:rustc-check-cfg=cfg(bpf_target_arch, values(\"x86_64\", \"aarch64\"))");
+    let arch = env::var("AYA_BPF_TARGET_ARCH").unwrap_or_else(|_| env::consts::ARCH.to_owned());
+    assert!(
+        matches!(arch.as_str(), "x86_64" | "aarch64"),
+        "unsupported BPF target architecture"
+    );
+    println!("cargo:rustc-cfg=bpf_target_arch=\"{arch}\"");
+    println!("cargo:rerun-if-env-changed=AYA_BPF_TARGET_ARCH");
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let source =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../../core-shims/usb.c");
@@ -10,6 +18,7 @@ fn main() {
         .args([
             "-target",
             "bpfel",
+            "-mcpu=v3",
             "-O2",
             "-g",
             "-emit-llvm",

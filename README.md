@@ -5,7 +5,8 @@ usbscope is an eBPF-based USB capture CLI for Linux kernels built without
 commands, USB-aware filters, and Wireshark-compatible capture files.
 
 The implementation is being built in stages. See [the implementation plan](docs/implementation.md)
-for completed work, validation, and remaining limitations. Live capture is not yet available.
+for completed work, validation, and remaining limitations. Live control, bulk,
+and interrupt capture is available for contiguous URB buffers on tested kernels.
 
 ## Capture semantics
 
@@ -38,6 +39,32 @@ usbscope -r capture.usbraw -w capture.pcapng --fail-on-loss
 
 Logs and statistics go to stderr, including when `-w -` writes binary data to stdout.
 
+## Live capture
+
+```sh
+sudo target/debug/usbscope -D
+sudo target/debug/usbscope -i usb2 --device 2 -w capture.pcapng
+sudo target/debug/usbscope -i any --duration 30 --raw-output capture.usbraw -w capture.pcapng --fail-on-loss
+```
+
+Without `-w`, the CLI prints an event summary. `-c` counts complete events;
+`-B` configures ring capacity in KiB, not packet length. Capture needs kernel
+BTF, BPF tracing/JIT, kprobes, readable kernel symbol addresses, and sufficient
+privileges (root in the development setup). The current baseline is Linux 6.6,
+little-endian x86_64. The BPF object defaults to `target/usbscope.bpf.o` and can
+be supplied with `--bpf-object`.
+
+IN data is copied at `usb_unanchor_urb` only when its immediate caller is
+`__usb_hcd_giveback_urb`, after DMA unmapping/copyback and before the driver
+callback. A missing required hook or redacted symbol addresses is a startup
+error. This hook ordering is kernel-internal and requires regression coverage.
+At stop, new submissions are disabled, with a 200 ms completion drain. URBs
+still in flight at that boundary are reported separately from transport loss.
+
+Scatter-gather buffers and live ISO are not supported at this stage; they are
+reported explicitly and make `--fail-on-loss` fail. Full expression filters,
+descriptor context, and audio support are subsequent stages.
+
 ## Kernel development tests
 
 The tested BPF build uses Rust `nightly-2025-12-01` (with `rust-src`),
@@ -49,6 +76,7 @@ linked with the Rust program; no C compiler or libbpf is needed at capture time.
 sh scripts/build-ebpf.sh
 sh tests/vm/build-kernel.sh /path/to/linux-source
 python3 tests/vm/run.py
+python3 tests/vm/run.py --live
 ```
 
 The VM runner needs QEMU x86_64, a static BusyBox, GCC, cpio, and a Linux source
@@ -56,3 +84,7 @@ tree. It uses TCG, so host root and KVM are unnecessary. The guest checks that
 usbmon is disabled, attaches a real probe, triggers a USB descriptor request,
 and compares captured metadata with an independent usbfs result. A successful
 attach without a matching event fails the test. Logs are in `target/vm-e2e.log`.
+The live suite adds 2 MiB + 512 byte USB storage reads and writes, unique URB
+pairing, exact payload comparison, byte-identical archive replay, TShark decoding,
+and an intentionally undersized ring that must report loss and fail strict mode.
+Artifacts are retained under `target/vm-artifacts`.

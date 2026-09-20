@@ -7,6 +7,7 @@ make -s -C "$source_dir" O="$build_dir" allnoconfig
 config="$source_dir/scripts/config"
 for feature in 64BIT SMP PRINTK BUG ELF_CORE BINFMT_ELF BINFMT_SCRIPT MULTIUSER \
     NET UNIX PCI PCI_MSI ACPI MODULES BPF BPF_SYSCALL BPF_JIT BPF_JIT_ALWAYS_ON \
+    VIRTIO_MENU VIRTIO VIRTIO_PCI NET_9P NET_9P_VIRTIO 9P_FS \
     KALLSYMS KALLSYMS_ALL KPROBES PERF_EVENTS FTRACE FUNCTION_TRACER \
     DYNAMIC_FTRACE DYNAMIC_FTRACE_WITH_REGS KPROBE_EVENTS BPF_EVENTS \
     DEBUG_KERNEL DEBUG_INFO_DWARF4 DEBUG_INFO_BTF \
@@ -19,7 +20,7 @@ for feature in 64BIT SMP PRINTK BUG ELF_CORE BINFMT_ELF BINFMT_SCRIPT MULTIUSER 
 done
 "$config" --file "$build_dir/.config" --disable USB_MON --set-val NR_CPUS 8
 make -s -C "$source_dir" O="$build_dir" olddefconfig
-for feature in BPF_SYSCALL BPF_JIT DEBUG_INFO_BTF KPROBES DYNAMIC_FTRACE USB IKCONFIG_PROC; do
+for feature in BPF_SYSCALL BPF_JIT DEBUG_INFO_BTF KPROBES DYNAMIC_FTRACE USB IKCONFIG_PROC NET_9P_VIRTIO; do
     if ! grep -q "^CONFIG_${feature}=y$" "$build_dir/.config"; then
         printf 'Required kernel feature was not enabled: CONFIG_%s\n' "$feature" >&2
         exit 1

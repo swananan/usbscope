@@ -12,12 +12,11 @@ resolver = "2"
 
 [dependencies]
 anyhow = "1"
-clap = { version = "4", features = ["derive"] }
-usbscope-common = { path = "crates/usbscope-common" }
-usbscope-capture = { path = "crates/usbscope-capture" }
-
-[dev-dependencies]
 aya = "=0.14.0"
+libc = "0.2"
+clap = { version = "4", features = ["derive"] }
+usbscope-common = { path = "crates/usbscope-common", features = ["user"] }
+usbscope-capture = { path = "crates/usbscope-capture" }
 
 [profile.release]
 debug = 1

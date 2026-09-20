@@ -12,6 +12,37 @@ pub const LOSS_RING: u32 = 1;
 pub const LOSS_READ: u32 = 2;
 pub const LOSS_UNSUPPORTED_BUFFER: u32 = 3;
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CaptureConfig {
+    pub epoch_offset_ns: u64,
+    pub giveback_start: u64,
+    pub giveback_end: u64,
+    /// Zero selects all buses; u32::MAX selects all device addresses.
+    pub bus: u32,
+    pub device: u32,
+    pub enabled: u32,
+    pub reserved: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CaptureStats {
+    pub submitted: u64,
+    pub completed: u64,
+    pub submit_errors: u64,
+    pub ring_losses: u64,
+    pub read_errors: u64,
+    pub unsupported_buffers: u64,
+    pub state_errors: u64,
+    pub unmatched_completions: u64,
+}
+
+#[cfg(feature = "user")]
+unsafe impl aya::Pod for CaptureConfig {}
+#[cfg(feature = "user")]
+unsafe impl aya::Pod for CaptureStats {}
+
 /// Ring transport ABI. Supported targets are little endian. `size` excludes
 /// unused bytes in the reservation; consumers never persist those bytes.
 #[repr(C)]

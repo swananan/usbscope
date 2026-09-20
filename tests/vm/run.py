@@ -12,8 +12,13 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--kernel', type=Path, default=ROOT / 'target/vm-kernel/arch/x86/boot/bzImage')
 parser.add_argument('--timeout', type=int, default=120)
 parser.add_argument('--log', type=Path, default=ROOT / 'target/vm-e2e.log')
+parser.add_argument('--live', action='store_true', help='validate full payload capture through the CLI')
+parser.add_argument('--artifacts', type=Path, default=ROOT / 'target/vm-artifacts')
 args = parser.parse_args()
 subprocess.run(['cargo', 'build', '--example', 'probe-smoke'], cwd=ROOT, check=True)
+if args.live:
+    subprocess.run(['cargo', 'build'], cwd=ROOT, check=True)
+    args.artifacts.mkdir(parents=True, exist_ok=True)
 subprocess.run(['gcc', '-O2', '-Wall', '-Werror', '-o', str(ROOT / 'target/usb-fixture'),
                 str(ROOT / 'tests/vm/usb-fixture.c')], check=True)
 
@@ -21,7 +26,7 @@ with tempfile.TemporaryDirectory(prefix='usbscope-vm-', dir=ROOT / 'target') as 
     work = Path(temp)
     tree = work / 'root'
     tree.mkdir()
-    for directory in ['bin', 'dev', 'proc', 'sys', 'tmp', 'run']:
+    for directory in ['bin', 'dev', 'proc', 'sys', 'tmp', 'run', 'out']:
         (tree / directory).mkdir()
 
     def install(source, destination=None):
@@ -41,6 +46,8 @@ with tempfile.TemporaryDirectory(prefix='usbscope-vm-', dir=ROOT / 'target') as 
     binary(shutil.which('busybox'), '/bin/busybox')
     binary(ROOT / 'target/debug/examples/probe-smoke', '/probe-smoke')
     binary(ROOT / 'target/usb-fixture', '/usb-fixture')
+    if args.live:
+        binary(ROOT / 'target/debug/usbscope', '/usbscope')
     install(ROOT / 'target/usbscope.bpf.o', '/usbscope.bpf.o')
     init = tree / 'init'
     init.write_text('''#!/bin/busybox sh
@@ -65,6 +72,30 @@ cmp /tmp/probe-expected /tmp/probe-observed || fail
 echo USBSCOPE_VM_PASS
 reboot -f
 ''')
+    if args.live:
+        init.write_text(init.read_text().replace('echo USBSCOPE_VM_PASS', '''
+mount -t 9p -o trans=virtio,version=9p2000.L artifacts /out || fail
+/usbscope --bpf-object /usbscope.bpf.o -w /out/live.pcapng --raw-output /out/live.usbraw --ready-file /tmp/live-ready --duration 6 --fail-on-loss &
+capture=$!
+for i in $(seq 1 100); do
+    test -f /tmp/live-ready && break
+    sleep 0.1
+done
+test -f /tmp/live-ready || fail
+/usb-fixture --bulk || fail
+wait $capture || fail
+/usbscope --bpf-object /usbscope.bpf.o -B 4 -w /out/loss.pcapng --ready-file /tmp/loss-ready --duration 4 --fail-on-loss 2>/out/loss.log &
+capture=$!
+for i in $(seq 1 100); do
+    test -f /tmp/loss-ready && break
+    sleep 0.1
+done
+test -f /tmp/loss-ready || fail
+/usb-fixture --bulk || fail
+if wait $capture; then fail; fi
+grep -q 'capture contains lost or incomplete events' /out/loss.log || fail
+sync
+echo USBSCOPE_VM_PASS'''))
     init.chmod(0o755)
     # newc archive, generated without root or device nodes (devtmpfs supplies those).
     archive = work / 'initramfs.cpio'
@@ -81,6 +112,8 @@ reboot -f
         '-monitor', 'none', '-nic', 'none', '-device', 'qemu-xhci,id=xhci',
         '-drive', f'if=none,id=stick,format=raw,file={disk}',
         '-device', 'usb-storage,bus=xhci.0,drive=stick,port=1']
+    if args.live:
+        command += ['-virtfs', f'local,path={args.artifacts.resolve()},mount_tag=artifacts,security_model=mapped-xattr']
     log_path = args.log.resolve()
     log_path.parent.mkdir(parents=True, exist_ok=True)
     print('Running QEMU; guest log:', log_path, flush=True)
@@ -94,3 +127,5 @@ reboot -f
         print(text[-12000:])
         raise SystemExit('VM e2e failed')
     print('\n'.join(line for line in text.splitlines() if 'OBSERVED' in line or 'USBSCOPE_' in line))
+    if args.live:
+        subprocess.run(['python3', str(ROOT / 'tests/vm/validate.py'), str(args.artifacts)], check=True)
