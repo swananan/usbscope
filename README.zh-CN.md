@@ -2,6 +2,9 @@
 
 [English](README.md) | 简体中文
 
+[![checks](https://github.com/swananan/usbscope/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/swananan/usbscope/actions/workflows/ci.yml)
+[![kernel e2e](https://github.com/swananan/usbscope/actions/workflows/vm-e2e.yml/badge.svg?branch=main)](https://github.com/swananan/usbscope/actions/workflows/vm-e2e.yml)
+
 usbscope 是一个基于 eBPF 的 USB 抓包命令行工具，面向 **Linux 内核编译时未启用
 `CONFIG_USB_MON` 的小众场景**。它不依赖 usbmon，记录主机侧 USB 请求（URB），
 帮助排查 USB 设备、驱动和音频传输问题。

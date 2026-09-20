@@ -90,5 +90,6 @@ bulk buffers. Each architecture/endian target builds its release and BPF object 
 kernels. The stable `kernel-e2e` check requires every selected job to pass.
 
 The [CI guide](ci.md) explains version pins, compact kernel caches, artifacts,
-local reproduction, and recorded results. The hosted workflow has not yet been
-run. The current validation boundaries remain listed under [usage limits](usage.md#current-usage-limits).
+local reproduction, and recorded results. Hosted status and logs are available in
+[GitHub Actions](https://github.com/swananan/usbscope/actions).
+The current validation boundaries remain listed under [usage limits](usage.md#current-usage-limits).

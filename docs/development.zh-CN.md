@@ -79,4 +79,5 @@ GitHub Actions 运行用户态检查和分层内核矩阵。PR 与 `main` 分支
 每种架构与字节序组合只构建一次发布程序和 BPF 对象，再用于所有内核。固定的 `kernel-e2e` 检查要求所选任务全部通过。
 
 [CI 指南（英文）](ci.md)说明了版本锁定、精简内核缓存、测试产物、本地复现方法和验证记录。
-托管工作流尚未运行；当前验证边界仍见[使用限制](usage.zh-CN.md#当前使用限制)。
+托管运行状态和日志见 [GitHub Actions](https://github.com/swananan/usbscope/actions)；
+当前验证边界仍见[使用限制](usage.zh-CN.md#当前使用限制)。

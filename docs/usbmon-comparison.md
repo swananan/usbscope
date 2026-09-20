@@ -87,7 +87,8 @@ across x86_64 and arm64/4 KiB/64 KiB, including big endian on eligible kernels:
 16 jobs on pull requests and pushes to `main`, and 52 in the nightly/full profile.
 The [big-endian guide](big-endian.md) records its pinned reference tools and coverage.
 Manual dispatch selects either
-profile and defaults to full. The expanded hosted workflow has not yet run. The enabled
+profile and defaults to full. See [hosted results](https://github.com/swananan/usbscope/actions/workflows/vm-e2e.yml)
+for the tested commit and profile. The enabled
 jobs require the tcpdump comparison; they do not skip it if a tool is missing.
 Both configurations retain the full original live suite.
 Enabled jobs also run a second comparison without `--sg` or `--audio`, covering

@@ -128,7 +128,8 @@ records with it.
 
 ## Validation status
 
-The hosted workflow has not yet run: this checkout has no Git remote configured.
+Hosted workflow status and logs are available in
+[GitHub Actions](https://github.com/swananan/usbscope/actions/workflows/vm-e2e.yml).
 Local runs verify the workflow's scripts and QEMU test path; they do not establish
 that every one of the 52 hosted combinations has passed. Before the big-endian
 extension, one BPF object per little-endian architecture passed these ten local configurations:
@@ -154,4 +155,5 @@ cross-endian replay, TShark, and forced-loss tests. The latter also passed the
 SG/audio and contiguous tcpdump comparisons with corruption checks. The same
 CLI/BPF bytes were used in both kernels. Little-endian x86_64 6.6.142/4 KiB and
 arm64 6.12.110/4 KiB were rerun with USB_MON=n after the encoding changes.
-Other newly added big-endian combinations await the hosted matrix.
+For other combinations, use the selected profile and commit recorded in a
+successful hosted matrix run as evidence; the local results above are separate.

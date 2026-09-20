@@ -119,6 +119,7 @@ attachment, replays raw archives inside the guest, and compares guest/host
 pcapng filtering byte for byte. USB_MON-enabled jobs additionally compare against
 tcpdump and run the corrupted-capture checks, with separate contiguous-buffer
 and SG/audio cases. Local results are recorded in [implementation.md](implementation.md);
-the expanded hosted workflow has not yet been run. Each architecture/endian target's packaged
+hosted results are available in [GitHub Actions](https://github.com/swananan/usbscope/actions/workflows/vm-e2e.yml).
+Each architecture/endian target's packaged
 CLI and BPF object are reused across all kernels; cached kernel bundles contain
 the matching ISO fixture, so test jobs do not rebuild the BPF object or CLI.

@@ -2,6 +2,9 @@
 
 English | [简体中文](README.zh-CN.md)
 
+[![checks](https://github.com/swananan/usbscope/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/swananan/usbscope/actions/workflows/ci.yml)
+[![kernel e2e](https://github.com/swananan/usbscope/actions/workflows/vm-e2e.yml/badge.svg?branch=main)](https://github.com/swananan/usbscope/actions/workflows/vm-e2e.yml)
+
 usbscope is an eBPF-based USB capture CLI for the **niche case where the Linux
 kernel was built without `CONFIG_USB_MON`**. It records host-side USB requests
 (URBs) to help diagnose device, driver, and USB audio problems without usbmon.
