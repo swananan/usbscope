@@ -1,5 +1,7 @@
 # usbscope
 
+English | [简体中文](README.zh-CN.md)
+
 usbscope is an eBPF-based USB capture CLI for the **niche case where the Linux
 kernel was built without `CONFIG_USB_MON`**. It provides tcpdump-inspired
 commands, USB-aware filters, and Wireshark-compatible capture files without
