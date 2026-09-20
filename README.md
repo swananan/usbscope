@@ -37,3 +37,22 @@ usbscope -r capture.usbraw -w capture.pcapng --fail-on-loss
 ```
 
 Logs and statistics go to stderr, including when `-w -` writes binary data to stdout.
+
+## Kernel development tests
+
+The tested BPF build uses Rust `nightly-2025-12-01` (with `rust-src`),
+`bpf-linker 0.9.15`, and Clang 18. The C shim compiles to LLVM bitcode and is
+linked with the Rust program; no C compiler or libbpf is needed at capture time.
+`BPF_TOOLCHAIN`, `BPF_LINKER`, and `BPF_CLANG` override build tools.
+
+```sh
+sh scripts/build-ebpf.sh
+sh tests/vm/build-kernel.sh /path/to/linux-source
+python3 tests/vm/run.py
+```
+
+The VM runner needs QEMU x86_64, a static BusyBox, GCC, cpio, and a Linux source
+tree. It uses TCG, so host root and KVM are unnecessary. The guest checks that
+usbmon is disabled, attaches a real probe, triggers a USB descriptor request,
+and compares captured metadata with an independent usbfs result. A successful
+attach without a matching event fails the test. Logs are in `target/vm-e2e.log`.

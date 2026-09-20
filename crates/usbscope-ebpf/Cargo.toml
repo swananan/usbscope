@@ -1,0 +1,21 @@
+[package]
+name = "usbscope-ebpf"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[workspace]
+
+[dependencies]
+aya-ebpf = "=0.2.1"
+usbscope-common = { path = "../usbscope-common" }
+
+[[bin]]
+name = "usbscope-ebpf"
+path = "src/main.rs"
+
+[profile.release]
+debug = 2
+panic = "abort"
+codegen-units = 1
+lto = true

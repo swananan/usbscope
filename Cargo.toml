@@ -16,5 +16,8 @@ clap = { version = "4", features = ["derive"] }
 usbscope-common = { path = "crates/usbscope-common" }
 usbscope-capture = { path = "crates/usbscope-capture" }
 
+[dev-dependencies]
+aya = "=0.14.0"
+
 [profile.release]
 debug = 1

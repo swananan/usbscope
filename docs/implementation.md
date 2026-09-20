@@ -6,7 +6,7 @@ because it compiles. Hardware/VM coverage and known limitations are recorded her
 | Stage | Scope | Status |
 | --- | --- | --- |
 | P0.1 | Workspace, versioned ring ABI, reassembly, pcapng, CLI e2e | Complete |
-| P0.2 | Rust/C CO-RE build and VM eBPF smoke test | Pending |
+| P0.2 | Rust/C CO-RE build and VM eBPF smoke test | Complete |
 | P1 | Live S/C/E capture, long payload, filtering, loss accounting | Pending |
 | P2 | ISO/audio metadata and sparse payload, device context | Pending |
 | P3 | Complete filter language, offline analysis, rotation and release checks | Pending |
@@ -40,3 +40,16 @@ interleaved/reversed fragments, 137 sparse ISO descriptors, control setup,
 binary stdout, missing records, explicit kernel errors, overlapping fragments,
 and malformed archive lengths. `cargo clippy --workspace --all-targets -- -D warnings`
 and formatting checks pass. These are userspace pipeline tests, not live capture tests.
+
+## P0.2 validation
+
+The same BPF ELF, built with Rust nightly-2025-12-01, bpf-linker 0.9.15, and
+Clang 18, passed the rootless QEMU smoke test on Linux 6.6.142 and 6.8.
+Both kernels have `CONFIG_USB_MON=n`. The C type views deliberately omit and
+reorder kernel fields, so matching bus/device/VID/PID/setup data requires actual
+CO-RE relocation. The independent USBDEVFS_CONTROL request and captured metadata
+matched. This establishes submission metadata and ring transport; full payload,
+completion ordering, SG, and audio remain later-stage validation requirements.
+
+Linux 6.6's BPF JIT depends on `CONFIG_MODULES`, even when all test drivers are
+built in. The kernel builder checks the resolved config before building.
