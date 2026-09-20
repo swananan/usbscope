@@ -1,0 +1,20 @@
+[package]
+name = "usbscope"
+version = "0.1.0"
+edition = "2024"
+description = "USB capture with eBPF for Linux kernels without CONFIG_USB_MON"
+license = "MIT OR Apache-2.0"
+
+[workspace]
+members = ["crates/usbscope-common", "crates/usbscope-capture"]
+exclude = ["crates/usbscope-ebpf"]
+resolver = "2"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+usbscope-common = { path = "crates/usbscope-common" }
+usbscope-capture = { path = "crates/usbscope-capture" }
+
+[profile.release]
+debug = 1

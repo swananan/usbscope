@@ -1,0 +1,10 @@
+[package]
+name = "usbscope-capture"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+anyhow = "1"
+tempfile = "3"
+usbscope-common = { path = "../usbscope-common" }
