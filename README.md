@@ -163,9 +163,16 @@ Artifacts are retained under `target/vm-artifacts`.
 The audio suite builds a VM-only test driver against the chosen kernel and
 verifies a 137-frame sparse ISO transfer against independent driver results.
 
-GitHub Actions runs userspace checks and defines a two-kernel VM matrix for
-6.6.142 and 6.8. Equivalent release-build suites have passed locally on both
-kernels; the hosted workflow has not yet been run. Physical USB controllers,
-DMA bounce paths, live ISO IN, and aarch64 still need hardware/architecture
+For independent live capture comparison, build an additional kernel with usbmon
+enabled and run with `--compare-tcpdump`. The [comparison guide](docs/usbmon-comparison.md)
+explains synchronization, field/payload matching, and explicit handling of
+usbmon/libpcap truncation. It also documents the negative tests for the checker.
+
+GitHub Actions runs userspace checks and defines a four-job VM matrix for
+6.6.142 and 6.8, each with USB_MON disabled and enabled. The enabled jobs add
+independent tcpdump capture comparison, including separate contiguous bulk runs.
+The comparison suites have passed locally on both kernels; the hosted workflow
+has not yet been run. Physical USB controllers, DMA bounce paths, live ISO IN,
+and aarch64 still need hardware/architecture
 coverage. Capture is implemented for interrupt URBs, but the VM fixtures exercise
 control, bulk, and ISO traffic.

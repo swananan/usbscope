@@ -12,6 +12,7 @@ because it compiles. Hardware/VM coverage and known limitations are recorded her
 | P3.1 | USB filter language, safe kernel prefilter, archive analysis | Complete |
 | P3.2 | x86_64 SG buffers and randomized-layout VM coverage | Complete |
 | P3.3 | pcapng input, rotation and release checks | Complete |
+| P3.4 | Independent tcpdump capture comparison and regular VM matrix | Complete |
 
 ## Invariants
 
@@ -24,13 +25,15 @@ because it compiles. Hardware/VM coverage and known limitations are recorded her
 - Ring failures have independent map counters; reporting a loss cannot rely on
   successfully writing another record to the same full ring.
 - CO-RE must be checked using different kernel layouts, not just the presence of BTF.
-- The kernel e2e target must actually have `CONFIG_USB_MON=n`.
+- The ordinary kernel e2e target must actually have `CONFIG_USB_MON=n`;
+  the separate differential target requires `CONFIG_USB_MON=y`.
 
 ## Test layers
 
 1. CLI archive-to-pcapng e2e: independent fixture producer and TShark decoder.
 2. QEMU kernel e2e: actual USB I/O through probes and ringbuf, with no usbmon.
-3. Cross-kernel/architecture and USB-controller coverage, including DMA copyback.
+3. Independent live tcpdump/usbmon comparison in an additional USB_MON-enabled VM.
+4. Cross-kernel/architecture and USB-controller coverage, including DMA copyback.
 
 The first layer does not establish that a kernel probe works. VM tests must
 record visible capture side effects, not just a successful load or attach.
@@ -156,6 +159,39 @@ pass. The repository includes userspace CI, a two-kernel VM workflow, and a
 package script producing the native x86_64 CLI, adjacent BPF object, documentation,
 licenses, and checksums. The hosted workflows have not yet run; the corresponding
 release validation commands have run locally.
+
+## P3.4 validation
+
+Independent live tcpdump/usbmon comparison passed on Linux 6.6.142 and 6.8 with
+`CONFIG_USB_MON=y`, using tcpdump 4.99.4 and libpcap 1.10.4. Each kernel ran two
+release-build cases:
+
+| Traffic | Matched events / URBs | Valid payload bytes compared | ISO descriptors compared |
+| --- | --- | --- | --- |
+| Control, SG bulk, sparse ISO OUT | 24 / 12 | 516,132 | 256 |
+| Control, contiguous bulk | 18 / 9 | 491,670 | 0 |
+
+Both collectors had zero reported drops in the compared captures. Metadata,
+control setup, phase/status/length/flags, non-ISO payload prefixes, and all
+reference-described ISO regions matched. TShark decoded both files. The
+reference snapshot was 245,824 bytes;
+each large bulk transfer retained a 245,760-byte prefix. usbmon retained 128 of
+137 ISO descriptors in each event. The checker requires these exact documented
+boundaries and reports them separately; independent fixtures continue to verify
+the complete 2,097,664-byte payloads and all 137 usbscope ISO frames.
+
+Ten deliberate corruptions of each audio capture and eight of each contiguous
+capture were rejected, including missing whole URBs and usbscope truncation
+beyond the reference's prefix. The full USB_MON-disabled Linux 6.6.142 suite was
+also rerun successfully after the runner changes. No capture implementation
+changes were needed to pass the differential tests.
+
+CI now has two kernels times two USB_MON configurations. Both enabled jobs run
+the SG/audio comparison and a second contiguous-buffer comparison, preserving
+captures, collector versions, comparison JSON, and guest logs. These commands
+have run locally; the hosted workflow has not yet run. See the
+[comparison guide](usbmon-comparison.md) for reproducible commands, normalization
+rules, and the scope of the baseline.
 
 ## Remaining validation and scope
 

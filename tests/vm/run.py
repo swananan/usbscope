@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run USB eBPF tests in a rootless QEMU TCG guest with CONFIG_USB_MON=n."""
+"""Rootless QEMU e2e; optionally compare live capture with tcpdump/usbmon."""
 import argparse
 from pathlib import Path
 import re
@@ -18,9 +18,13 @@ parser.add_argument('--audio', action='store_true', help='include a 137-frame sp
 parser.add_argument('--filters', action='store_true', help='compare live kernel prefiltering and exact userspace filtering')
 parser.add_argument('--sg', action='store_true', help='use asynchronous usbfs scatter-gather buffers for large URBs')
 parser.add_argument('--release', action='store_true', help='test the optimized userspace binary')
+parser.add_argument('--compare-tcpdump', action='store_true',
+                    help='capture the same transfers with tcpdump (requires a USB_MON=y kernel)')
 args = parser.parse_args()
-if (args.audio or args.filters or args.sg) and not args.live:
-    parser.error('--audio, --filters, and --sg require --live')
+if (args.audio or args.filters or args.sg or args.compare_tcpdump) and not args.live:
+    parser.error('--audio, --filters, --sg, and --compare-tcpdump require --live')
+if args.compare_tcpdump and not shutil.which('tcpdump'):
+    parser.error('--compare-tcpdump requires tcpdump on the host')
 profile = 'release' if args.release else 'debug'
 build_flags = ['--release'] if args.release else []
 subprocess.run(['cargo', 'build', '--locked', '--example', 'probe-smoke'] + build_flags, cwd=ROOT, check=True)
@@ -62,12 +66,19 @@ with tempfile.TemporaryDirectory(prefix='usbscope-vm-', dir=ROOT / 'target') as 
     binary(ROOT / 'target/usb-fixture', '/usb-fixture')
     if args.live:
         binary(ROOT / f'target/{profile}/usbscope', '/usbscope')
+    if args.compare_tcpdump:
+        binary(shutil.which('tcpdump'), '/tcpdump')
+        (tree / 'etc').mkdir()
+        (tree / 'etc/passwd').write_text('root:x:0:0:root:/root:/bin/sh\ncapture:x:65534:65534:capture:/tmp:/bin/sh\n')
+        (tree / 'etc/group').write_text('root:x:0:\ncapture:x:65534:\n')
+        (tree / 'etc/nsswitch.conf').write_text('passwd: files\ngroup: files\n')
     install(ROOT / 'target/usbscope.bpf.o', '/usbscope.bpf.o')
     if args.audio:
         install(module_dir / 'usbscope_iso.ko', '/usbscope_iso.ko')
     init = tree / 'init'
     init.write_text('''#!/bin/busybox sh
 /bin/busybox --install -s /bin
+export LC_ALL=C
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
@@ -144,6 +155,25 @@ sync
 echo USBSCOPE_VM_PASS'''))
     if args.sg:
         init.write_text(init.read_text().replace('/usb-fixture --bulk', '/usb-fixture --sg'))
+    if args.compare_tcpdump:
+        script = init.read_text().replace("'^# CONFIG_USB_MON is not set$'", "'^CONFIG_USB_MON=y$'")
+        script = script.replace('/usbscope --bpf-object /usbscope.bpf.o -w /out/live.pcapng', '''
+test -c /dev/usbmon0 || fail
+/tcpdump --version > /out/tcpdump-version.txt
+# The shell opens the output before tcpdump drops to the guest-only account.
+/tcpdump -i usbmon0 -s 0 -U -n -Z capture -w - > /out/tcpdump.pcap 2>/out/tcpdump.log &
+reference=$!
+for i in $(seq 1 600); do
+    grep -q 'listening on usbmon0' /out/tcpdump.log && break
+    kill -0 $reference 2>/dev/null || fail
+    sleep 0.1
+done
+grep -q 'listening on usbmon0' /out/tcpdump.log || fail
+/usbscope --bpf-object /usbscope.bpf.o -w /out/live.pcapng''', 1)
+        script = script.replace('wait $capture || fail', '''wait $capture || fail
+kill -INT $reference || fail
+wait $reference || fail''', 1)
+        init.write_text(script)
     init.chmod(0o755)
     # newc archive, generated without root or device nodes (devtmpfs supplies those).
     archive = work / 'initramfs.cpio'
@@ -183,3 +213,7 @@ echo USBSCOPE_VM_PASS'''))
         subprocess.run(['python3', str(ROOT / 'tests/vm/validate.py'), str(args.artifacts)]
                        + ['--binary', str(ROOT / f'target/{profile}/usbscope')]
                        + (['--audio'] if args.audio else []) + (['--filters'] if args.filters else []), cwd=ROOT, check=True)
+    if args.compare_tcpdump:
+        subprocess.run(['python3', str(ROOT / 'tests/vm/compare.py'), str(args.artifacts)]
+                       + (['--audio'] if args.audio else []), cwd=ROOT, check=True)
+        subprocess.run(['python3', str(ROOT / 'tests/vm/test_compare.py'), str(args.artifacts)], cwd=ROOT, check=True)

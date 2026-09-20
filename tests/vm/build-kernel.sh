@@ -19,7 +19,12 @@ for feature in 64BIT SMP PRINTK BUG ELF_CORE BINFMT_ELF BINFMT_SCRIPT MULTIUSER 
     USB_ANNOUNCE_NEW_DEVICES IKCONFIG IKCONFIG_PROC; do
     "$config" --file "$build_dir/.config" --enable "$feature"
 done
-"$config" --file "$build_dir/.config" --disable USB_MON --set-val NR_CPUS 8
+case "${USBMON:-n}" in
+    y) "$config" --file "$build_dir/.config" --enable USB_MON ;;
+    n) "$config" --file "$build_dir/.config" --disable USB_MON ;;
+    *) printf 'USBMON must be y or n (default n)\n' >&2; exit 1 ;;
+esac
+"$config" --file "$build_dir/.config" --set-val NR_CPUS 8
 make -s -C "$source_dir" O="$build_dir" olddefconfig
 for feature in BPF_SYSCALL BPF_JIT DEBUG_INFO_BTF KPROBES DYNAMIC_FTRACE USB IKCONFIG_PROC NET_9P_VIRTIO; do
     if ! grep -q "^CONFIG_${feature}=y$" "$build_dir/.config"; then
@@ -27,6 +32,10 @@ for feature in BPF_SYSCALL BPF_JIT DEBUG_INFO_BTF KPROBES DYNAMIC_FTRACE USB IKC
         exit 1
     fi
 done
-grep -q '^# CONFIG_USB_MON is not set$' "$build_dir/.config"
+if [ "${USBMON:-n}" = y ]; then
+    grep -q '^CONFIG_USB_MON=y$' "$build_dir/.config"
+else
+    grep -q '^# CONFIG_USB_MON is not set$' "$build_dir/.config"
+fi
 make -s -C "$source_dir" O="$build_dir" -j "${JOBS:-8}" bzImage
 printf 'Kernel: %s/arch/x86/boot/bzImage\n' "$build_dir"

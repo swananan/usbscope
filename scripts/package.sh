@@ -11,7 +11,7 @@ scripts/build-ebpf.sh
 artifact_dir="$repo_dir/target/dist/usbscope-$platform"
 mkdir -p "$artifact_dir/docs"
 cp target/release/usbscope target/usbscope.bpf.o README.md LICENSE-MIT LICENSE-APACHE "$artifact_dir/"
-cp docs/filters.md docs/implementation.md "$artifact_dir/docs/"
+cp docs/filters.md docs/implementation.md docs/usbmon-comparison.md "$artifact_dir/docs/"
 (
     cd "$artifact_dir"
     sha256sum usbscope usbscope.bpf.o > SHA256SUMS
