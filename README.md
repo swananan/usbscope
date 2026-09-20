@@ -237,3 +237,15 @@ independent tcpdump capture comparison, including separate contiguous bulk runs.
 The comparison suites have passed locally on both kernels; the hosted workflow
 has not yet been run. The current validation boundaries are listed under
 [usage limits](#current-usage-limits).
+
+## License
+
+Unless a file states otherwise, usbscope's source code and documentation are
+available under either the [MIT License](LICENSE-MIT) or the
+[Apache License 2.0](LICENSE-APACHE), at your option (`MIT OR Apache-2.0`).
+
+The eBPF object retains its `Dual MIT/GPL` license declaration for
+[GPL-compatible loading into the Linux kernel](https://docs.kernel.org/bpf/bpf_licensing.html).
+The VM-only ISO test driver is separately licensed under
+[GPL-2.0](tests/vm/kernel/COPYING). Third-party dependencies retain their
+respective licenses.

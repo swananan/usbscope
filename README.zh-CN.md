@@ -203,3 +203,13 @@ GitHub Actions 会运行用户态检查，并定义了四项 VM 任务：6.6.142
 USB_MON 禁用与启用两种配置。启用 USB_MON 的任务额外运行独立 tcpdump 抓包对比，
 包括单独运行的连续缓冲区 bulk 场景。对比测试已在本地的两个内核上通过，托管的工作流尚未运行。
 当前验证边界见[使用限制](#当前使用限制)。
+
+## 许可证
+
+除文件另有声明外，usbscope 的源代码和文档采用 [MIT 许可证](LICENSE-MIT) 或
+[Apache License 2.0](LICENSE-APACHE)，可任选其一（`MIT OR Apache-2.0`）。
+
+eBPF 目标文件保留 `Dual MIT/GPL` 许可声明，以满足
+[Linux 内核对 BPF 程序的 GPL 兼容性检查要求](https://docs.kernel.org/bpf/bpf_licensing.html)。
+仅用于 VM 测试的 ISO 驱动单独采用 [GPL-2.0](tests/vm/kernel/COPYING)。
+第三方依赖保留各自的许可证。
