@@ -113,6 +113,12 @@ static unsigned attribute(const char *base, const char *name, unsigned radix)
 
 int main(int argc, char **argv)
 {
+    if (argc == 2 && !strcmp(argv[1], "--page-kib")) {
+        long page = sysconf(_SC_PAGESIZE);
+        if (page < 1024) return 1;
+        printf("%ld\n", page / 1024);
+        return 0;
+    }
     use_sg = argc == 2 && !strcmp(argv[1], "--sg");
     glob_t devices;
     if (glob("/sys/bus/usb/devices/*/idVendor", 0, 0, &devices)) return 1;
