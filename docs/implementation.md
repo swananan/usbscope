@@ -13,6 +13,9 @@ because it compiles. Hardware/VM coverage and known limitations are recorded her
 | P3.2 | x86_64 SG buffers and randomized-layout VM coverage | Complete |
 | P3.3 | pcapng input, rotation and release checks | Complete |
 | P3.4 | Independent tcpdump capture comparison and regular VM matrix | Complete |
+| P4.1 | Native/cross arm64 builds and rootless VM capture e2e | Complete |
+| P4.2 | arm64 SG, 4 KiB/64 KiB pages, architecture/ABI guards | Complete |
+| P4.3 | Architecture-specific releases, twelve-job CI matrix, platform documentation | Complete locally; hosted CI pending |
 
 ## Invariants
 
@@ -193,14 +196,47 @@ have run locally; the hosted workflow has not yet run. See the
 [comparison guide](usbmon-comparison.md) for reproducible commands, normalization
 rules, and the scope of the baseline.
 
+## P4 arm64 validation
+
+Rootless QEMU TCG runs passed on arm64 Linux 6.6.142 and 6.8. Each kernel was
+tested with both 4 KiB and 64 KiB pages and `CONFIG_ARM64_VA_BITS=48`. The same
+arm64 BPF object was used across these configurations. The tested cases include
+control, contiguous/SG bulk, 137-frame sparse ISO OUT, filters, exact full-length
+payloads, loss counters, and TShark decoding. The 6.8/64 KiB kernel also enabled
+kernel pointer authentication. Hardware and kernel BTI remain unvalidated.
+
+With USB_MON disabled, both page sizes passed on 6.6.142, and 4 KiB passed on
+6.8. Independent tcpdump comparison passed with 6.6.142/4 KiB and 6.8/64 KiB:
+each SG/audio run matched 34 events (17 URBs), 516,238 payload bytes, and 256
+reference ISO descriptors. All ten corrupted captures were rejected. The extra
+control events relative to x86_64 are captured and compared too; they are not
+discarded to force equal event counts across platforms. usbmon/libpcap's
+documented truncation boundaries remain explicit; the independent fixture still
+checks every byte of both 2,097,664-byte usbscope payloads and all 137 descriptors.
+
+The arm64 4 KiB/64 KiB SG path combines a readable running kernel configuration
+with CO-RE structure sizes. Missing/unsupported layout information disables SG
+and reports affected events as loss. The configuration tests reject page-size
+mismatches and tagged KASAN. The live suite mutates real object metadata to check
+wrong-architecture and configuration-ABI rejection. Guest raw replay and pcapng
+filtering match the x86_64 host byte for byte. The forced-loss fixture uses one
+guest page and pauses its reader, removing the previous 4 KiB assumption.
+
+The package script builds x86_64/aarch64 Linux GNU archives with a matching BPF
+object; cross builds do not overwrite the native development object. The VM
+workflow exercises these release artifacts in twelve configurations, including
+both USB_MON states and separate contiguous-buffer comparisons. The hosted
+workflow has not yet run. Reproduction instructions are in [platforms.md](platforms.md).
+
 ## Remaining validation and scope
 
 - Physical controllers and DMA bounce/copyback paths need hardware testing.
 - Live ISO IN, interrupt traffic, separately allocated SG chains, and HCD enqueue
   failure paths need dedicated kernel fixtures; existing coverage must not be
   treated as evidence for those cases.
-- aarch64 and other memory models are not validated. SG address translation
-  currently supports x86_64 SPARSEMEM_VMEMMAP with 4 KiB pages only.
+- arm64 physical devices, kernel BTI, 16 KiB pages, and VA widths other than 48
+  are not validated. SG supports SPARSEMEM_VMEMMAP on x86_64 and arm64; other
+  memory models and tagged KASAN SG memory remain unsupported.
 - Post-DMA observation uses kernel-internal hook ordering and readable symbol
   addresses. Other kernel versions/configurations require regression testing.
 - Device context is an initial snapshot. Hotplug/alternate-setting timelines,

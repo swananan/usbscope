@@ -10,7 +10,7 @@ depending on usbmon.
 Built with **Aya and Rust eBPF**, it supports **eBPF CO-RE (Compile Once, Run
 Everywhere)** through small C accessors and transports capture records through
 a **BPF ring buffer**. Control, bulk, interrupt, and ISO capture is implemented,
-including x86_64 bulk scatter-gather buffers.
+including bulk scatter-gather buffers on **Linux x86_64 and arm64 (aarch64)**.
 
 ## Requirements and minimum kernel version
 
@@ -20,19 +20,21 @@ Earlier upstream kernels need a backport of that helper. Helper availability
 alone is insufficient to establish compatibility with this program.
 
 **Minimum validated kernel: Linux 6.6.142.** The current e2e matrix covers
-**6.6.142 and 6.8 on little-endian x86_64**. Compatibility with other versions,
+**6.6.142 and 6.8 on little-endian x86_64 and arm64**, with 4 KiB and 64 KiB
+pages on arm64. Compatibility with other versions,
 including 5.17 through earlier 6.6 releases and newer kernels, remains unverified.
 Use the validated versions as the current deployment baseline and check the
 following requirements for live capture:
 
 | Requirement | Current restriction |
 | --- | --- |
-| Platform | Linux, little-endian x86_64. Release artifacts and runtime e2e coverage currently target this architecture. |
+| Platform | Linux, little-endian x86_64 or arm64 (aarch64). Each architecture has its own CLI and BPF object. 32-bit ARM and other operating systems are not supported. |
 | USB core | Built into the kernel (`CONFIG_USB=y`). The current loader resolves USB hooks from vmlinux BTF; loading their BTF from a USB core module is not implemented. `CONFIG_USB_MON` is optional. |
 | Kernel BTF | Readable `/sys/kernel/btf/vmlinux`, with type/function information for the USB hooks (`CONFIG_DEBUG_INFO_BTF`). |
 | BPF and tracing | BPF syscall/JIT, ringbuf, `bpf_loop`, fentry/fexit, and kprobes must be available. See the [VM kernel configuration](tests/vm/build-kernel.sh) for the tested configuration. |
 | Kernel symbols | Readable, nonzero addresses for the required functions in `/proc/kallsyms`. Redacted symbols prevent startup. |
 | Privileges | Live capture is tested as root. Kernel security policy must permit BPF tracing and kernel symbol access; restricted containers or kernel lockdown can prevent capture. |
+| arm64 SG configuration | Readable `/proc/config.gz` or `/boot/config-$(uname -r)` matching the running kernel. SG translation uses the page size and `CONFIG_ARM64_VA_BITS`; missing or unsupported configuration disables SG capture and affected events are reported as loss. |
 
 Offline reading with `-r` does not load BPF programs and does not need these
 live-capture privileges, kernel BTF, USB hardware, or a BPF object.
@@ -41,10 +43,13 @@ live-capture privileges, kernel BTF, USB hardware, or a BPF object.
 
 Clang emits BTF CO-RE relocations for kernel field offsets and type sizes from
 the C accessors. `bpf-linker` links them into the Rust BPF object, and Aya applies
-the relocations using the running kernel's BTF at load time. The **same BPF
-object has passed e2e tests on Linux 6.6.142 and 6.8**.
+the relocations using the running kernel's BTF at load time. For each supported
+architecture, the **same BPF object has passed e2e tests on Linux 6.6.142 and 6.8**.
 On compatible kernels of the target architecture, this avoids recompiling for
 each kernel layout. Capture hosts do not need kernel headers, Clang, or libbpf.
+Objects are specific to the CPU architecture because probe register conventions
+differ; the CLI rejects an object built for the wrong architecture or
+configuration ABI before loading it.
 
 CO-RE handles structure layout changes. The required BPF helpers, attachable USB
 functions, and their execution order must still be present. The completion hook
@@ -60,13 +65,15 @@ need regression testing before compatibility can be claimed.
   application-imposed snap limit. Ring capacity, pending-event state, temporary
   storage, disk space, and reader/format limits still apply. Read failures and
   resource exhaustion are reported as loss; `--fail-on-loss` makes them an error.
-- **SG buffers:** supported on x86_64 SPARSEMEM_VMEMMAP with 4 KiB base pages and
-  visible `vmemmap_base`/`page_offset_base` symbols. ISO SG buffers and other
-  memory models are unsupported.
+- **SG buffers:** require SPARSEMEM_VMEMMAP. x86_64 uses 4 KiB pages and visible
+  `vmemmap_base`/`page_offset_base` symbols. arm64 is validated with 4 KiB/64 KiB
+  pages and `CONFIG_ARM64_VA_BITS=48`; it additionally needs the running kernel
+  configuration. ISO SG buffers, other memory models, and arm64 tagged KASAN
+  memory are unsupported. arm64 16 KiB pages and other VA widths remain unverified.
 - **Validation coverage:** live control, contiguous/SG bulk, and ISO OUT have
   QEMU e2e coverage. Physical controllers, DMA bounce paths, live ISO IN,
   interrupt traffic, separately allocated SG chains, enqueue failures, and
-  aarch64 still need validation.
+  physical arm64 devices still need validation.
 - **Audio context:** the device JSON is an initial sysfs snapshot. Configuration
   and alternate-setting changes over time, UAC feedback decoding, and PCM/WAV
   export are not implemented.
@@ -106,11 +113,22 @@ The CLI e2e tests independently produce transport archives, invoke the binary,
 and use TShark to verify USB fields and payload bytes. They require Python 3;
 `--require-tshark` makes a missing external decoder a failure rather than a skip.
 
-`scripts/package.sh` builds an x86_64 Linux archive in `target/dist/`, containing
+`scripts/package.sh` builds a native x86_64 or aarch64 Linux archive in `target/dist/`, containing
 the CLI, BPF object, documentation, licenses, and binary/object SHA-256 checksums.
 Keep `usbscope` and `usbscope.bpf.o` together after extraction. The CLI locates the
 adjacent object automatically, regardless of the working directory. This is a
-native Linux build; libc requirements follow the build host.
+Linux GNU build; libc requirements follow the selected compiler/sysroot.
+On an x86_64 Linux build host, install `gcc-aarch64-linux-gnu` and cross-build with:
+
+```sh
+rustup target add aarch64-unknown-linux-gnu
+scripts/package.sh aarch64
+```
+
+This produces `target/dist/usbscope-aarch64-linux.tar.gz`.
+`scripts/build-ebpf.sh aarch64` builds only the ARM BPF object at
+`target/aarch64/usbscope.bpf.o`. See the [platform guide](docs/platforms.md)
+for native/cross builds and ARM e2e commands.
 
 ## Offline reading and file rotation
 
@@ -156,12 +174,13 @@ IN data is copied at `usb_unanchor_urb` only when its immediate caller is
 `__usb_hcd_giveback_urb`, after DMA unmapping/copyback and before the driver
 callback. A missing required hook or redacted symbol addresses is a startup
 error. This hook ordering is kernel-internal and requires regression coverage.
-At stop, new submissions are disabled, with a 200 ms completion drain. URBs
+At stop, observation of new submissions is disabled, with a 200 ms completion drain. URBs
 still in flight at that boundary are reported separately from transport loss.
 
-Bulk SG buffers are supported on x86_64 SPARSEMEM_VMEMMAP kernels exposing
-`vmemmap_base` and `page_offset_base`. Addresses and structure sizes are resolved
-at runtime; no fixed kernel layout or DMA-to-CPU address conversion is assumed.
+Bulk SG buffers are supported on x86_64 and arm64 SPARSEMEM_VMEMMAP kernels.
+x86_64 reads `vmemmap_base` and `page_offset_base`; arm64 derives the mapping from
+the running kernel configuration, page size, and CO-RE `struct page` size.
+This translates CPU virtual memory rather than DMA addresses.
 Unsupported memory models, ISO SG buffers, or unreadable memory are reported
 explicitly and make `--fail-on-loss` fail.
 
@@ -214,14 +233,17 @@ python3 tests/vm/run.py --live --audio --filters
 python3 tests/vm/run.py --live --audio --filters --sg --release
 ```
 
-The VM runner needs QEMU x86_64, a static BusyBox, GCC, cpio, and a Linux source
-tree. It uses TCG, so host root and KVM are unnecessary. The guest checks that
+The VM runner needs QEMU for the guest architecture, a matching BusyBox and
+userspace libraries, GCC, cpio, and a Linux source tree. It supports native and
+cross-architecture runs using TCG, so host root and KVM are unnecessary. The guest checks that
 usbmon is disabled, attaches a real probe, triggers a USB descriptor request,
 and compares captured metadata with an independent usbfs result. A successful
 attach without a matching event fails the test. Logs are in `target/vm-e2e.log`.
 The live suite adds 2 MiB + 512 byte USB storage reads and writes, unique URB
 pairing, exact payload comparison, byte-identical archive replay, TShark decoding,
 and an intentionally undersized ring that must report loss and fail strict mode.
+It also rejects mismatched BPF objects and compares guest replay/filtering with
+the host's results, including when their architectures differ.
 Artifacts are retained under `target/vm-artifacts`.
 The audio suite builds a VM-only test driver against the chosen kernel and
 verifies a 137-frame sparse ISO transfer against independent driver results.
@@ -231,10 +253,11 @@ enabled and run with `--compare-tcpdump`. The [comparison guide](docs/usbmon-com
 explains synchronization, field/payload matching, and explicit handling of
 usbmon/libpcap truncation. It also documents the negative tests for the checker.
 
-GitHub Actions runs userspace checks and defines a four-job VM matrix for
-6.6.142 and 6.8, each with USB_MON disabled and enabled. The enabled jobs add
+GitHub Actions runs userspace checks and defines a twelve-job VM matrix:
+x86_64, arm64/4 KiB, and arm64/64 KiB, each with 6.6.142 and 6.8 and USB_MON
+disabled and enabled. The enabled jobs add
 independent tcpdump capture comparison, including separate contiguous bulk runs.
-The comparison suites have passed locally on both kernels; the hosted workflow
+The comparison suites have passed locally on both architectures and kernels; the hosted workflow
 has not yet been run. The current validation boundaries are listed under
 [usage limits](#current-usage-limits).
 

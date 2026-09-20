@@ -8,7 +8,7 @@ permissions:
   contents: read
 jobs:
   kernel:
-    name: Linux ${{ matrix.kernel }} / USB_MON=${{ matrix.usbmon }}
+    name: ${{ matrix.target.arch }} / ${{ matrix.target.pages }} / Linux ${{ matrix.kernel }} / USB_MON=${{ matrix.usbmon }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -16,6 +16,12 @@ jobs:
       matrix:
         kernel: ['6.6.142', '6.8']
         usbmon: ['n', 'y']
+        target:
+          - {arch: x86_64, kernel_arch: x86, pages: 4K}
+          - {arch: aarch64, kernel_arch: arm64, pages: 4K}
+          - {arch: aarch64, kernel_arch: arm64, pages: 64K}
+    env:
+      CAPTURE_ARCH: ${{ matrix.target.arch }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.98.1
@@ -27,26 +33,36 @@ jobs:
       - name: Install build and VM tools
         run: |
           sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y clang-18 llvm-18 qemu-system-x86 busybox-static cpio tshark tcpdump build-essential flex bison bc libelf-dev libssl-dev dwarves
+          vm_packages=(qemu-system-x86)
+          if [ "$CAPTURE_ARCH" = aarch64 ]; then
+            vm_packages=(qemu-system-arm gcc-aarch64-linux-gnu)
+          fi
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y clang-18 llvm-18 "${vm_packages[@]}" busybox-static cpio tshark tcpdump build-essential flex bison bc libelf-dev libssl-dev dwarves
           cargo +nightly-2025-12-01 install bpf-linker --version 0.9.15 --locked
-      - name: Build Rust and CO-RE object
+      - name: Build architecture-specific release and guest userspace
         env:
           BPF_CLANG: clang-18
+          RUSTUP_TOOLCHAIN: 1.98.1
         run: |
-          cargo +1.98.1 build --release --locked
-          scripts/build-ebpf.sh
+          rustup target add "$CAPTURE_ARCH-unknown-linux-gnu"
+          scripts/package.sh "$CAPTURE_ARCH"
+          if [ "$CAPTURE_ARCH" = aarch64 ]; then
+            python3 tests/vm/prepare-guest.py --arch aarch64
+          fi
       - uses: actions/cache@v4
         id: kernel-cache
         with:
           path: |
             target/linux-source
             target/vm-kernel
-          key: usbmon-${{ matrix.usbmon }}-${{ runner.os }}-${{ matrix.kernel }}-${{ hashFiles('tests/vm/build-kernel.sh') }}
+          key: ${{ matrix.target.arch }}-${{ matrix.target.pages }}-usbmon-${{ matrix.usbmon }}-${{ runner.os }}-${{ matrix.kernel }}-${{ hashFiles('tests/vm/build-kernel.sh') }}
       - name: Build kernel with CONFIG_USB_MON=${{ matrix.usbmon }}
         if: steps.kernel-cache.outputs.cache-hit != 'true'
         env:
           KERNEL_VERSION: ${{ matrix.kernel }}
           USBMON: ${{ matrix.usbmon }}
+          ARCH: ${{ matrix.target.kernel_arch }}
+          ARM64_PAGE_SIZE: ${{ matrix.target.pages }}
         run: |
           mkdir -p target/linux-source
           curl --fail --location --retry 3 "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${KERNEL_VERSION}.tar.xz" -o target/linux.tar.xz
@@ -58,19 +74,30 @@ jobs:
           USBMON: ${{ matrix.usbmon }}
         run: |
           extra=()
+          if [ "$CAPTURE_ARCH" = aarch64 ]; then
+            extra+=(--guest-root target/vm-guest/aarch64)
+          fi
           if [ "$USBMON" = y ]; then extra+=(--compare-tcpdump); fi
-          python3 tests/vm/run.py --live --audio --filters --sg --release "${extra[@]}"
+          python3 tests/vm/run.py --arch "$CAPTURE_ARCH" --live --audio --filters --sg --release \
+            --binary "target/dist/usbscope-$CAPTURE_ARCH-linux/usbscope" \
+            --bpf-object "target/dist/usbscope-$CAPTURE_ARCH-linux/usbscope.bpf.o" "${extra[@]}"
       - name: Compare contiguous bulk buffers
         if: matrix.usbmon == 'y'
         env:
           RUSTUP_TOOLCHAIN: 1.98.1
         run: |
-          python3 tests/vm/run.py --live --release --compare-tcpdump \
+          extra=()
+          if [ "$CAPTURE_ARCH" = aarch64 ]; then
+            extra+=(--guest-root target/vm-guest/aarch64)
+          fi
+          python3 tests/vm/run.py --arch "$CAPTURE_ARCH" --live --release --compare-tcpdump \
+            --binary "target/dist/usbscope-$CAPTURE_ARCH-linux/usbscope" \
+            --bpf-object "target/dist/usbscope-$CAPTURE_ARCH-linux/usbscope.bpf.o" "${extra[@]}" \
             --log target/vm-contiguous.log --artifacts target/vm-artifacts/contiguous
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: vm-e2e-${{ matrix.kernel }}-usbmon-${{ matrix.usbmon }}
+          name: vm-e2e-${{ matrix.target.arch }}-${{ matrix.target.pages }}-${{ matrix.kernel }}-usbmon-${{ matrix.usbmon }}
           path: |
             target/vm-e2e.log
             target/vm-contiguous.log

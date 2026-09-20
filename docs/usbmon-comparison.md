@@ -18,8 +18,10 @@ python3 tests/vm/run.py --release --live --audio --filters --sg \
   --log target/vm-usbmon.log --artifacts target/vm-usbmon-artifacts
 ```
 
-In addition to the ordinary VM dependencies, install `tcpdump` on the host. The
-runner copies it and its libraries into the temporary guest. Capture runs only
+In addition to the ordinary VM dependencies, install `tcpdump` for the guest
+architecture. Native runs use the host copy; cross runs use `--guest-root`, as
+described in the [platform guide](platforms.md). The runner copies it and its
+libraries into the temporary guest. Capture runs only
 inside QEMU; host root, host usbmon, and physical USB devices are not needed.
 
 ## Collection and comparison
@@ -72,14 +74,15 @@ Passing the comparison does not turn a truncated baseline into a full-length one
 
 These rules follow [libpcap's USB ring sizing](https://github.com/the-tcpdump-group/libpcap/blob/libpcap-1.10.4/pcap-usb-linux.c)
 and [the kernel's usbmon binary implementation](https://github.com/torvalds/linux/blob/v6.8/drivers/usb/mon/mon_bin.c).
-The checker targets the pinned x86_64 VM fixture and explicitly rejects unsupported
+The checker targets the x86_64 and arm64 VM fixtures and explicitly rejects unsupported
 capture encodings. Update its baseline assumptions with evidence when changing
 the kernel matrix or reference collector.
 
 ## Regression coverage and artifacts
 
-GitHub Actions runs Linux 6.6.142 and 6.8 with USB_MON both disabled and enabled:
-four jobs on pull requests, pushes to `main`, and manual dispatch. The enabled
+GitHub Actions defines Linux 6.6.142 and 6.8 with USB_MON both disabled and enabled,
+across x86_64, arm64/4 KiB, and arm64/64 KiB: twelve jobs on pull requests, pushes
+to `main`, and manual dispatch. The expanded hosted workflow has not yet run. The enabled
 jobs require the tcpdump comparison; they do not skip it if a tool is missing.
 Both configurations retain the full original live suite.
 Enabled jobs also run a second comparison without `--sg` or `--audio`, covering

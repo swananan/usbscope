@@ -9,7 +9,8 @@ usbscope 是一个基于 eBPF 的 USB 抓包命令行工具，面向 **Linux 内
 项目采用 **Aya 和 Rust eBPF**，通过少量 C 访问函数支持 **eBPF CO-RE
 （Compile Once, Run Everywhere，编译一次，到处运行）**，使用 **BPF ring buffer**
 传输抓包记录。目前已实现控制（control）、批量（bulk）、中断（interrupt）和
-等时（ISO）传输抓取，包括 x86_64 上的 bulk scatter-gather（SG，分散/聚集）缓冲区。
+等时（ISO）传输抓取，包括 **Linux x86_64 和 arm64（aarch64）** 上的
+bulk scatter-gather（SG，分散/聚集）缓冲区。
 
 ## 运行要求与最低内核版本
 
@@ -18,17 +19,19 @@ usbscope 是一个基于 eBPF 的 USB 抓包命令行工具，面向 **Linux 内
 更早的上游内核需要回移该辅助函数。但具备这一辅助函数，并不足以证明内核与本程序兼容。
 
 **经过验证的最低内核版本为 Linux 6.6.142。** 当前端到端（e2e）测试矩阵覆盖
-**小端 x86_64 上的 6.6.142 和 6.8**。其他版本的兼容性尚未验证，包括从 5.17
+**小端 x86_64 和 arm64 上的 6.6.142 和 6.8**，其中 arm64 覆盖 4 KiB 和 64 KiB 页。
+其他版本的兼容性尚未验证，包括从 5.17
 到早期 6.6 的版本，以及更新的内核。当前部署应以已经验证的版本为基准；实时抓包还需满足以下要求：
 
 | 要求 | 当前限制 |
 | --- | --- |
-| 平台 | Linux，小端 x86_64。发布产物和运行时 e2e 测试目前均面向该架构。 |
+| 平台 | Linux，小端 x86_64 或 arm64（aarch64）。各架构使用各自的 CLI 和 BPF 目标文件。不支持 32 位 ARM 或其他操作系统。 |
 | USB 核心 | 必须编译进内核（`CONFIG_USB=y`）。当前加载器从 vmlinux BTF 解析 USB 挂载点，尚未实现从 USB 核心模块加载相应 BTF。`CONFIG_USB_MON` 可开可关。 |
 | 内核 BTF | `/sys/kernel/btf/vmlinux` 必须可读，并包含 USB 挂载点的类型和函数信息（`CONFIG_DEBUG_INFO_BTF`）。 |
 | BPF 与跟踪功能 | 需要 BPF 系统调用/JIT、ringbuf、`bpf_loop`、fentry/fexit 和 kprobes。已测试的配置见 [VM 内核构建脚本](tests/vm/build-kernel.sh)。 |
 | 内核符号 | 必须能够从 `/proc/kallsyms` 读取所需函数的非零地址。符号地址被隐藏时无法启动。 |
 | 权限 | 实时抓包已在 root 权限下测试。内核安全策略必须允许 BPF 跟踪及内核符号访问；受限容器或内核 lockdown 可能阻止抓包。 |
+| arm64 SG 配置 | 需要可读且与运行内核一致的 `/proc/config.gz` 或 `/boot/config-$(uname -r)`。SG 地址转换使用页大小和 `CONFIG_ARM64_VA_BITS`；配置缺失或不受支持时禁用 SG 抓取，受影响的事件会被报告为丢失。 |
 
 使用 `-r` 离线读取文件不会加载 BPF 程序，因此不需要上述实时抓包权限、内核 BTF、
 USB 硬件或 BPF 目标文件。
@@ -37,9 +40,10 @@ USB 硬件或 BPF 目标文件。
 
 Clang 根据 C 访问函数生成针对内核字段偏移和类型大小的 BTF CO-RE 重定位信息，
 `bpf-linker` 将其链接进 Rust BPF 目标文件，Aya 则在加载时根据运行中内核的 BTF
-完成重定位。**同一个 BPF 目标文件已通过 Linux 6.6.142 和 6.8 的 e2e 测试。**
+完成重定位。**各受支持架构均使用同一个 BPF 目标文件，通过 Linux 6.6.142 和 6.8 的 e2e 测试。**
 对于目标架构上兼容的内核，无需针对每种内核结构布局重新编译。抓包主机不需要内核头文件、
-Clang 或 libbpf。
+Clang 或 libbpf。不同 CPU 架构的探针寄存器约定不同，因此需要各自的 BPF 目标文件；
+CLI 会在加载前拒绝架构或配置 ABI 不匹配的文件。
 
 CO-RE 处理的是结构体布局变化。所需的 BPF 辅助函数、可挂载的 USB 函数及其执行顺序仍须满足要求。
 完成事件的挂载点依赖内核内部行为，因此其他内核版本或配置仍需通过回归测试后才能确认兼容性。
@@ -51,11 +55,13 @@ CO-RE 处理的是结构体布局变化。所需的 BPF 辅助函数、可挂载
 - **抓取完整性：** 程序不人为设置载荷（payload）长度或 ISO 描述符数量的截断上限，
   但仍受 ring 容量、待处理事件状态、临时存储、磁盘空间以及读取器和格式限制的影响。
   读取失败和资源耗尽会被报告为抓取丢失；使用 `--fail-on-loss` 可将其视为错误。
-- **SG 缓冲区：** 支持采用 SPARSEMEM_VMEMMAP、基础页大小为 4 KiB，且可见
-  `vmemmap_base`/`page_offset_base` 符号的 x86_64 内核。不支持 ISO SG 缓冲区或其他内存模型。
+- **SG 缓冲区：** 需要 SPARSEMEM_VMEMMAP。x86_64 使用 4 KiB 页，并要求可见
+  `vmemmap_base`/`page_offset_base` 符号。arm64 已验证 4 KiB/64 KiB 页及
+  `CONFIG_ARM64_VA_BITS=48`，还需要读取运行内核的配置。不支持 ISO SG 缓冲区、其他内存模型
+  或 arm64 带标签的 KASAN 内存。arm64 的 16 KiB 页和其他虚拟地址位数尚未验证。
 - **验证范围：** 实时 control、连续缓冲区/SG bulk 和 ISO OUT 已有 QEMU e2e 覆盖。
   实体控制器、DMA bounce 路径、实时 ISO IN、中断传输、单独分配的 SG 链、入队失败及
-  aarch64 仍需验证。
+  arm64 实体设备仍需验证。
 - **音频上下文：** 设备 JSON 仅包含初始 sysfs 快照。尚未实现配置及备用设置
   （alternate setting）的变化时间线、UAC 反馈解码和 PCM/WAV 导出。
 
@@ -90,10 +96,20 @@ python3 tests/e2e.py --binary target/release/usbscope --require-tshark
 CLI e2e 测试独立生成传输归档，调用命令行程序，并通过 TShark 核对 USB 字段和载荷字节。
 测试需要 Python 3；指定 `--require-tshark` 后，缺少外部解码器会导致测试失败，而不是跳过验证。
 
-`scripts/package.sh` 在 `target/dist/` 中生成 x86_64 Linux 发布归档，包含 CLI、
+`scripts/package.sh` 在 `target/dist/` 中生成本机架构的 x86_64 或 aarch64 Linux 发布归档，包含 CLI、
 BPF 目标文件、文档、许可证，以及二进制和 BPF 目标文件的 SHA-256 校验值。
 解压后请将 `usbscope` 和 `usbscope.bpf.o` 放在同一目录。CLI 会自动查找同目录下的
-BPF 目标文件，不受当前工作目录影响。这是 Linux 原生构建，libc 要求取决于构建主机。
+BPF 目标文件，不受当前工作目录影响。产物面向 Linux GNU，libc 要求取决于所选编译器和 sysroot。
+在 x86_64 Linux 构建主机上，安装 `gcc-aarch64-linux-gnu` 后可交叉构建：
+
+```sh
+rustup target add aarch64-unknown-linux-gnu
+scripts/package.sh aarch64
+```
+
+产物为 `target/dist/usbscope-aarch64-linux.tar.gz`。仅构建 ARM BPF 部分时可运行
+`scripts/build-ebpf.sh aarch64`，输出为 `target/aarch64/usbscope.bpf.o`。
+本机构建、交叉构建和 ARM e2e 命令见[平台支持指南（英文）](docs/platforms.md)。
 
 ## 离线读取与文件轮转
 
@@ -137,9 +153,10 @@ sudo target/release/usbscope -i any --duration 30 --raw-output capture.usbraw -w
 停止抓包时，程序停止跟踪新的 URB 提交，并留出 200 ms 接收完成事件。
 届时仍未完成的 URB 会单独报告，与传输记录丢失区分统计。
 
-bulk SG 缓冲区支持要求 x86_64 SPARSEMEM_VMEMMAP 内核暴露 `vmemmap_base` 和
-`page_offset_base`。地址和结构体大小在运行时解析，不假定固定的内核布局，也不将 DMA
-地址直接换算为 CPU 地址。遇到不支持的内存模型、ISO SG 缓冲区或不可读内存时会明确报告，
+bulk SG 缓冲区支持 x86_64 和 arm64 的 SPARSEMEM_VMEMMAP 内核。x86_64 读取
+`vmemmap_base` 和 `page_offset_base`；arm64 根据运行内核的配置、页大小及 CO-RE 获得的
+`struct page` 大小推导映射。这是 CPU 虚拟内存地址转换，不使用 DMA 地址进行换算。
+遇到不支持的内存模型、ISO SG 缓冲区或不可读内存时会明确报告，
 并使 `--fail-on-loss` 检查失败。
 
 ## 过滤器
@@ -185,13 +202,14 @@ python3 tests/vm/run.py --live --audio --filters
 python3 tests/vm/run.py --live --audio --filters --sg --release
 ```
 
-VM 测试运行器需要 QEMU x86_64、静态链接的 BusyBox、GCC、cpio 和 Linux 源码树。
-它使用 TCG，因此不需要宿主机 root 权限或 KVM。来宾系统会确认 usbmon 已禁用，
+VM 测试运行器需要对应来宾架构的 QEMU、BusyBox 和用户态库，以及 GCC、cpio 和 Linux 源码树。
+它支持本机和跨架构测试，使用 TCG，因此不需要宿主机 root 权限或 KVM。来宾系统会确认 usbmon 已禁用，
 挂载真实探针，触发 USB 描述符请求，并将抓取的元数据与独立 usbfs 操作的结果比较。
 即使挂载成功，若没有捕获到匹配事件，测试仍会失败。日志保存在 `target/vm-e2e.log`。
 
 实时抓包测试还覆盖 2 MiB + 512 字节的 USB 存储读写、唯一的 URB 配对、逐字节载荷比较、
 字节完全一致的归档回放、TShark 解码，以及刻意缩小 ring 后必须报告丢失并使严格模式失败的场景。
+测试还会确认不匹配的 BPF 文件被拒绝，并核对来宾与宿主机的回放和过滤结果，包括两者架构不同时。
 产物保存在 `target/vm-artifacts`。音频测试会针对所选内核构建仅用于 VM 的测试驱动，
 将含 137 帧的稀疏 ISO 传输与驱动独立记录的结果进行核对。
 
@@ -199,9 +217,10 @@ VM 测试运行器需要 QEMU x86_64、静态链接的 BusyBox、GCC、cpio 和 
 运行测试。[对比指南（英文）](docs/usbmon-comparison.md)说明了同步方式、字段和载荷匹配规则，
 以及如何明确处理 usbmon/libpcap 的截断行为，也记录了对比检查器的负向测试。
 
-GitHub Actions 会运行用户态检查，并定义了四项 VM 任务：6.6.142 和 6.8 各自搭配
-USB_MON 禁用与启用两种配置。启用 USB_MON 的任务额外运行独立 tcpdump 抓包对比，
-包括单独运行的连续缓冲区 bulk 场景。对比测试已在本地的两个内核上通过，托管的工作流尚未运行。
+GitHub Actions 会运行用户态检查，并定义了十二项 VM 任务：x86_64、arm64/4 KiB、
+arm64/64 KiB 各自搭配 6.6.142 和 6.8，以及 USB_MON 禁用与启用两种配置。
+启用 USB_MON 的任务额外运行独立 tcpdump 抓包对比，包括单独运行的连续缓冲区 bulk 场景。
+对比测试已在本地的两种架构、两个内核上通过，托管的工作流尚未运行。
 当前验证边界见[使用限制](#当前使用限制)。
 
 ## 许可证
