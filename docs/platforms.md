@@ -67,8 +67,10 @@ scripts/package.sh aarch64
 The archives are `target/dist/usbscope-<arch>-linux.tar.gz`, where `<arch>` is
 `x86_64`, `aarch64`, or `aarch64_be`. Each contains the CLI, matching BPF
 object, English/Chinese READMEs, detailed documentation, licenses, and checksums.
-These are Linux GNU builds; little-endian libc requirements follow the
-compiler/sysroot, while the big-endian CLI is statically linked.
+All three GNU CLIs are statically linked with no ELF dynamic loader or shared-library
+dependencies. ARM executables use 64 KiB segment alignment for both supported page sizes.
+The [download guide](downloads.md) covers the independent build CI, archive
+checksums, and package e2e tests.
 Keep the executable and object together when installing the archive.
 
 ## ARM e2e from an x86_64 host

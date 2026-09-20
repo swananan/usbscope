@@ -2,7 +2,8 @@
 
 [README](../README.zh-CN.md) · [English](usage.md) | 简体中文
 
-先按[构建指南](development.zh-CN.md#构建与测试)准备 CLI 和 BPF 目标文件。
+先下载[对应平台的发行包](downloads.zh-CN.md)，或按[构建指南](development.zh-CN.md#构建与测试)
+准备 CLI 和 BPF 目标文件。
 以下示例在仓库根目录执行，或使用 `PATH` 中的 `usbscope`。
 
 [运行要求](#运行要求与最低内核版本) · [使用限制](#当前使用限制) · [抓包语义](#抓包语义) ·

@@ -2,7 +2,8 @@
 
 [README](../README.md) · English | [简体中文](usage.zh-CN.md)
 
-Start with the [build guide](development.md#build-and-test) to obtain the CLI and BPF object.
+Download a [platform package](downloads.md) or follow the
+[build guide](development.md#build-and-test) to obtain the CLI and BPF object.
 The examples below run from the repository root or use `usbscope` from your `PATH`.
 
 [Requirements](#requirements-and-minimum-kernel-version) · [Limits](#current-usage-limits) ·

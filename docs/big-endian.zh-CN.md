@@ -19,19 +19,21 @@ USB_MON 开关两种状态。[CI 验证记录（英文）](ci.md#validation-stat
 
 ## 在 x86_64 Linux 上构建
 
-先安装 [BPF 工具链](development.zh-CN.md#构建与测试)，以及 `build-essential`、`flex`、
-`bison`、`pkg-config`、`file`、`qemu-user`、`qemu-system-arm`、`cpio` 和 TShark。
-准备脚本下载 SHA-256 锁定的源码与独立 Bootlin SDK，不向宿主系统安装外架构软件包，
-也不需要 root。
+仅构建发行包时，安装 [BPF 工具链](development.zh-CN.md#构建与测试)、`build-essential`、
+Python 3、curl 和 xz-utils 即可。准备脚本下载 SHA-256 锁定的独立 Bootlin SDK，
+不向宿主系统安装外架构软件包，也不需要 root。
 
 ```sh
 rustup toolchain install nightly-2026-09-18 --component rust-src
-python3 tests/vm/prepare-big-endian.py
+python3 tests/vm/prepare-big-endian.py --toolchain-only
 . target/be-tools/environment.sh
 scripts/package.sh aarch64_be
-scripts/build-userspace.sh aarch64_be --release --example probe-smoke
-scripts/ci/test-big-endian.sh
 ```
+
+校验解压后的发行包时，安装 `qemu-user` 和 TShark，运行
+`scripts/ci/test-package.sh aarch64_be`，无需来宾动态库。
+VM 测试另外需要 `flex`、`bison`、`pkg-config`、`file`、`qemu-system-arm` 和 `cpio`，
+并运行不带 `--toolchain-only` 的 `python3 tests/vm/prepare-big-endian.py` 来构建来宾工具。
 
 产物为 `target/dist/usbscope-aarch64_be-linux.tar.gz`，安装时保持 CLI 与 BPF 对象同目录。
 BPF 工具链仍为 `nightly-2025-12-01`、Clang 18 和 `bpf-linker 0.9.15`。
@@ -52,7 +54,7 @@ flate2 的 zlib-rs 后端，避开 crc32fast ARM CRC 路径的本机字序假设
 
 ## 常规 e2e 与本地复现
 
-构建任务通过 `qemu-aarch64_be` 运行单元测试及全部 23 项 CLI/TShark e2e。
+内核工作流的构建任务通过 `qemu-aarch64_be` 运行单元测试及全部 23 项 CLI/TShark e2e。
 内核任务启动真实的大端内核，并同时检查进程字节序与 `CONFIG_CPU_BIG_ENDIAN=y`。
 使用现有 USB 流量生成器，覆盖每方向 2,097,664 字节的完整载荷、SG、137 帧稀疏 ISO、
 过滤、强制丢失及错误对象拒绝。USB_MON 开启时，还必须通过 SG/音频与连续缓冲区两套

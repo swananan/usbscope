@@ -1,0 +1,98 @@
+name: build
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  CARGO_TERM_COLOR: always
+  RUSTUP_TOOLCHAIN: 1.98.1
+jobs:
+  package:
+    name: package / ${{ matrix.arch }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64, aarch64_be]
+    env:
+      CAPTURE_ARCH: ${{ matrix.arch }}
+      BPF_CLANG: clang-18
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.98.1
+        with:
+          targets: ${{ matrix.arch != 'aarch64_be' && format('{0}-unknown-linux-gnu', matrix.arch) || '' }}
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2025-12-01
+          components: rust-src
+      - uses: dtolnay/rust-toolchain@master
+        if: matrix.arch == 'aarch64_be'
+        with:
+          toolchain: nightly-2026-09-18
+          components: rust-src
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.arch }}
+          save-if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+      - uses: actions/cache/restore@v6
+        id: linker
+        with:
+          path: ~/.cargo/bin/bpf-linker
+          key: bpf-linker-${{ runner.os }}-${{ runner.arch }}-nightly-2025-12-01-0.9.15
+      - name: Install build and package-test tools
+        run: |
+          sudo apt-get update
+          packages=(clang-18 llvm-18 build-essential tshark)
+          if [[ "$CAPTURE_ARCH" = aarch64 ]]; then packages+=(gcc-aarch64-linux-gnu libc6-dev-arm64-cross); fi
+          if [[ "$CAPTURE_ARCH" != x86_64 ]]; then packages+=(qemu-user); fi
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"
+      - name: Install pinned BPF linker
+        if: steps.linker.outputs.cache-hit != 'true'
+        run: cargo +nightly-2025-12-01 install bpf-linker --version 0.9.15 --locked
+      - uses: actions/cache/save@v6
+        if: steps.linker.outputs.cache-hit != 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        with:
+          path: ~/.cargo/bin/bpf-linker
+          key: ${{ steps.linker.outputs.cache-primary-key }}
+      - name: Build static release and matching CO-RE object
+        run: |
+          if [[ "$CAPTURE_ARCH" = aarch64_be ]]; then
+            python3 tests/vm/prepare-big-endian.py --toolchain-only
+            source target/be-tools/environment.sh
+          fi
+          scripts/package.sh "$CAPTURE_ARCH"
+      - name: Verify archive and run packaged CLI e2e
+        run: scripts/ci/test-package.sh "$CAPTURE_ARCH"
+      - name: Record archive checksum
+        run: cat "target/dist/usbscope-$CAPTURE_ARCH-linux.tar.gz.sha256" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: usbscope-${{ matrix.arch }}-linux
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            target/dist/usbscope-${{ matrix.arch }}-linux.tar.gz
+            target/dist/usbscope-${{ matrix.arch }}-linux.tar.gz.sha256
+
+  check:
+    name: build
+    if: always()
+    needs: [package]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require all release targets to pass
+        env:
+          RESULT: ${{ needs.package.result }}
+        run: test "$RESULT" = success

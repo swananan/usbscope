@@ -26,10 +26,13 @@ python3 tests/e2e.py --binary target/release/usbscope --require-tshark
 CLI e2e 测试独立生成传输归档，调用命令行程序，并通过 TShark 核对 USB 字段和载荷字节。
 测试需要 Python 3；指定 `--require-tshark` 后，缺少外部解码器会导致测试失败，而不是跳过验证。
 
-`scripts/package.sh` 在 `target/dist/` 中生成本机架构的 x86_64 或 aarch64 Linux 发布归档，包含 CLI、
+`scripts/package.sh <arch>` 在 `target/dist/` 中生成 `x86_64`、`aarch64` 或 `aarch64_be`
+平台的静态 Linux 发行包，包含 CLI、
 BPF 目标文件、文档、许可证，以及二进制和 BPF 目标文件的 SHA-256 校验值。
 解压后请将 `usbscope` 和 `usbscope.bpf.o` 放在同一目录。CLI 会自动查找同目录下的
-BPF 目标文件，不受当前工作目录影响。产物面向 Linux GNU，libc 要求取决于所选编译器和 sysroot。
+BPF 目标文件，不受当前工作目录影响。GNU 发行包内已静态链接 C 运行库，没有共享库依赖。
+打包需要 Python 3、匹配目标平台的 GCC/binutils 和 libc 开发文件。
+产物下载、校验和及归档测试见[下载与 Build CI](downloads.zh-CN.md)。
 在 x86_64 Linux 构建主机上，安装 `gcc-aarch64-linux-gnu` 后可交叉构建：
 
 ```sh

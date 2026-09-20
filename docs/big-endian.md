@@ -22,19 +22,23 @@ and the explicit capability flags in [kernels.json](../scripts/ci/kernels.json).
 
 ## Build on x86_64 Linux
 
-Install the [BPF tools](development.md#build-and-test), plus `build-essential`,
-`flex`, `bison`, `pkg-config`, `file`, `qemu-user`, `qemu-system-arm`, `cpio`, and
-TShark. The helper downloads SHA-256-pinned sources and an isolated Bootlin SDK;
-it does not install foreign packages into the host system or require root.
+To build only the release, install the [BPF tools](development.md#build-and-test),
+`build-essential`, Python 3, curl, and xz-utils. The helper downloads a
+SHA-256-pinned Bootlin SDK without installing foreign packages into the host
+system or requiring root.
 
 ```sh
 rustup toolchain install nightly-2026-09-18 --component rust-src
-python3 tests/vm/prepare-big-endian.py
+python3 tests/vm/prepare-big-endian.py --toolchain-only
 . target/be-tools/environment.sh
 scripts/package.sh aarch64_be
-scripts/build-userspace.sh aarch64_be --release --example probe-smoke
-scripts/ci/test-big-endian.sh
 ```
+
+To test the extracted package, install `qemu-user` and TShark and run
+`scripts/ci/test-package.sh aarch64_be`; no guest libraries are needed.
+VM tests additionally need `flex`, `bison`, `pkg-config`, `file`,
+`qemu-system-arm`, and `cpio`. Run `python3 tests/vm/prepare-big-endian.py`
+without `--toolchain-only` to build their guest tools.
 
 The archive is `target/dist/usbscope-aarch64_be-linux.tar.gz`. Keep the CLI and
 BPF object together. The BPF toolchain remains `nightly-2025-12-01`, Clang 18,
@@ -59,7 +63,7 @@ recorded in [prepare-big-endian.py](../tests/vm/prepare-big-endian.py).
 
 ## Regular e2e and local reproduction
 
-The build job runs unit tests and all 23 CLI/TShark cases through
+The kernel workflow's build job runs unit tests and all 23 CLI/TShark cases through
 `qemu-aarch64_be`. Kernel jobs boot a big-endian kernel and independently assert
 both the executing process's byte order and `CONFIG_CPU_BIG_ENDIAN=y`.
 They use the ordinary USB fixtures, including full 2,097,664-byte IN/OUT payloads,

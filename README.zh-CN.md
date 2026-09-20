@@ -3,6 +3,7 @@
 [English](README.md) | 简体中文
 
 [![checks](https://github.com/swananan/usbscope/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/swananan/usbscope/actions/workflows/ci.yml)
+[![build](https://github.com/swananan/usbscope/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/swananan/usbscope/actions/workflows/build.yml)
 [![kernel e2e](https://github.com/swananan/usbscope/actions/workflows/vm-e2e.yml/badge.svg?branch=main)](https://github.com/swananan/usbscope/actions/workflows/vm-e2e.yml)
 
 usbscope 是一个基于 eBPF 的 USB 抓包命令行工具，面向 **Linux 内核编译时未启用
@@ -36,6 +37,7 @@ USB 硬件或 BPF 目标文件。
 
 | 主题 | 文档 |
 | --- | --- |
+| 下载 | [各平台发行包与运行依赖](docs/downloads.zh-CN.md) |
 | 入门与抓包命令 | [使用方法、过滤、离线读取、轮转与音频](docs/usage.zh-CN.md) |
 | 兼容性与限制 | [运行要求](docs/usage.zh-CN.md#运行要求与最低内核版本) · [使用限制](docs/usage.zh-CN.md#当前使用限制) |
 | 过滤器参考 | [USB 过滤语法（英文）](docs/filters.md) |

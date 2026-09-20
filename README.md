@@ -3,6 +3,7 @@
 English | [简体中文](README.zh-CN.md)
 
 [![checks](https://github.com/swananan/usbscope/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/swananan/usbscope/actions/workflows/ci.yml)
+[![build](https://github.com/swananan/usbscope/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/swananan/usbscope/actions/workflows/build.yml)
 [![kernel e2e](https://github.com/swananan/usbscope/actions/workflows/vm-e2e.yml/badge.svg?branch=main)](https://github.com/swananan/usbscope/actions/workflows/vm-e2e.yml)
 
 usbscope is an eBPF-based USB capture CLI for the **niche case where the Linux
@@ -37,6 +38,7 @@ privileges, kernel BTF, USB hardware, or a BPF object.
 
 | Topic | Guide |
 | --- | --- |
+| Downloads | [Platform packages and runtime dependencies](docs/downloads.md) |
 | Getting started and capture commands | [Usage, filters, offline reading, rotation, and audio](docs/usage.md) |
 | Compatibility and limitations | [Runtime requirements](docs/usage.md#requirements-and-minimum-kernel-version) · [Usage limits](docs/usage.md#current-usage-limits) |
 | Filter reference | [USB filter grammar](docs/filters.md) |

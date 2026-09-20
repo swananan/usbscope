@@ -28,11 +28,14 @@ The CLI e2e tests independently produce transport archives, invoke the binary,
 and use TShark to verify USB fields and payload bytes. They require Python 3;
 `--require-tshark` makes a missing external decoder a failure rather than a skip.
 
-`scripts/package.sh` builds a native x86_64 or aarch64 Linux archive in `target/dist/`, containing
+`scripts/package.sh <arch>` builds a static Linux archive in `target/dist/` for
+`x86_64`, `aarch64`, or `aarch64_be`, containing
 the CLI, BPF object, documentation, licenses, and binary/object SHA-256 checksums.
 Keep `usbscope` and `usbscope.bpf.o` together after extraction. The CLI locates the
-adjacent object automatically, regardless of the working directory. This is a
-Linux GNU build; libc requirements follow the selected compiler/sysroot.
+adjacent object automatically, regardless of the working directory. The packaged
+GNU binaries include their C runtime and have no shared-library dependencies.
+Packaging needs Python 3 and matching GCC/binutils with libc development files.
+See [downloads and build CI](downloads.md) for artifacts, checksums, and package tests.
 On an x86_64 Linux build host, install `gcc-aarch64-linux-gnu` and cross-build with:
 
 ```sh

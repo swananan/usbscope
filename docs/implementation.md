@@ -27,6 +27,7 @@ results are recorded in [P7](#p7-github-actions-validation).
 | P5.3 | Verifier compatibility on 7.2 and final cross-kernel object regression | Complete |
 | P6 | arm64 big endian, cross-endian replay, three-target packages and CI | Complete |
 | P7 | GitHub repository, hosted CI fixes and validation | Userspace and 16-job matrix passed; full run linked below |
+| P8 | Static packages and independent three-target build CI | Local package tests passed; hosted results linked below |
 
 ## Invariants
 
@@ -406,3 +407,25 @@ tests the same commit across all pinned kernels. Its job conclusions, logs, and
 capture artifacts provide the per-configuration results; see the
 [CI validation record](ci.md#validation-status) for the run index. These QEMU
 results are separate from the physical-controller coverage still listed above.
+
+## P8: static packages and build CI
+
+The package script now statically links the x86_64 and little-endian arm64 CLI,
+matching the existing big-endian release. Both ARM byte orders use 64 KiB
+segment alignment. Only the packaged CLI's debug information is stripped;
+the BPF object's BTF and CO-RE relocations remain intact. Each archive has an
+external SHA-256 file in addition to its internal binary/object checksums.
+
+All three locally built archives passed checks for ELF architecture and byte
+order, no PT_INTERP/DT_NEEDED runtime dependencies, ARM page alignment, BPF target
+metadata, and CO-RE relocations. All 23 CLI/TShark e2e cases passed on each freshly
+extracted package, with an empty target sysroot for ARM qemu-user. The 15 CI
+contract tests include rejection of dynamic loaders, shared-library dependencies,
+and ARM executables aligned only for 4 KiB pages. ShellCheck and Actionlint pass.
+
+The independent [build workflow](https://github.com/swananan/usbscope/actions/workflows/build.yml)
+builds and tests the three platform archives without kernel builds or VM tools.
+Its run results and downloadable artifacts are separate from the live-capture
+kernel matrix, which uses the same static package script. See the bilingual
+[download guide](downloads.md) for installation, runtime requirements, build
+dependencies, and the exact artifact checks.

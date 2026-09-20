@@ -52,6 +52,11 @@ USB device, host BPF attachment, KVM, or privileged VM runner is required.
 
 ## Build once, test across kernels
 
+The independent [build CI](downloads.md#build-ci) creates downloadable static
+packages for all three targets, checks their ELF/CO-RE metadata, and runs packaged
+CLI e2e. It uses the same `scripts/package.sh` as the VM workflow below, without
+building kernels or guest tools.
+
 Three build jobs produce architecture/endian-specific release archives and VM helpers.
 Every kernel job downloads these artifacts. All kernels of a target use
 the **same CLI and BPF bytes**, exercising CO-RE without per-kernel recompilation.
