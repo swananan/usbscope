@@ -87,8 +87,8 @@ selected VM job fails or is skipped.
 
 ## Local reproduction and updates
 
-Install the README's Rust/BPF toolchains and the VM dependencies from
-[platforms.md](platforms.md). Kernel building also requires GCC, flex, bison, bc,
+Install the [Rust/BPF toolchains](development.md#build-and-test) and the VM
+dependencies from the [platform guide](platforms.md). Kernel building also requires GCC, flex, bison, bc,
 libelf/libssl development packages, and pahole (`dwarves` on Ubuntu).
 
 ```sh
@@ -112,7 +112,9 @@ When updating a kernel, edit its version and the tarball digest from kernel.org'
 and comparison cases before committing. Keep 6.6.142 pinned as the lower bound.
 Do not resolve a moving `latest` inside PR jobs: a failed run must identify the
 exact source used. Nightly runs cover the committed pins; upstream release bumps
-still require a manifest update. Update this table and both READMEs with it.
+still require a manifest update. Update this table, the
+[runtime coverage](platforms.md#runtime-coverage), and any affected validation
+records with it.
 
 ## Validation status
 

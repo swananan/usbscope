@@ -3,6 +3,10 @@
 Each completed stage is committed separately. A stage is not complete merely
 because it compiles. Hardware/VM coverage and known limitations are recorded here.
 
+For the current design, see the [architecture and CO-RE guide](architecture.md).
+Build commands and test setup are in the [development guide](development.md);
+operational requirements and limits are in the [usage guide](usage.md).
+
 | Stage | Scope | Status |
 | --- | --- | --- |
 | P0.1 | Workspace, versioned ring ABI, reassembly, pcapng, CLI e2e | Complete |

@@ -25,7 +25,7 @@ scripts/build-ebpf.sh "$capture_arch"
 artifact_dir="$repo_dir/target/dist/usbscope-$platform"
 mkdir -p "$artifact_dir/docs"
 cp "target/$rust_target/release/usbscope" "target/$capture_arch/usbscope.bpf.o" README.md README.zh-CN.md LICENSE-MIT LICENSE-APACHE "$artifact_dir/"
-cp docs/filters.md docs/implementation.md docs/usbmon-comparison.md docs/platforms.md docs/ci.md "$artifact_dir/docs/"
+cp docs/*.md "$artifact_dir/docs/"
 (
     cd "$artifact_dir"
     sha256sum usbscope usbscope.bpf.o > SHA256SUMS

@@ -29,17 +29,19 @@ as incomplete, and `--fail-on-loss` fails. Contiguous-buffer capture remains
 available. Tagged KASAN SG memory is unsupported.
 
 The ARM tests use QEMU's `virt` machine, TCG, and a virtual xHCI controller.
-Both USB_MON-disabled capture and independent tcpdump comparison have passed on
-both kernel versions. The same arm64 BPF object works across the tested page
+USB_MON-disabled capture and independent tcpdump comparison have passed in the
+[recorded configurations](ci.md#validation-status). The same arm64 BPF object works across the tested page
 sizes and kernels. Linux 6.8 with 64 KiB pages also passed with kernel pointer
 authentication enabled. Physical ARM controllers, kernel BTI, 16 KiB pages,
-other VA widths, and tagged KASAN still need validation. See the README for the
-remaining USB/audio limitations. 32-bit ARM, big-endian targets, Windows, and
+other VA widths, and tagged KASAN still need validation. See the
+[usage limits](usage.md#current-usage-limits) for the remaining USB/audio limitations.
+32-bit ARM, big-endian targets, Windows, and
 macOS are outside the current support scope.
 
 ## Build and package
 
-On a native x86_64 or arm64 Linux machine, use the toolchains from the README:
+On a native x86_64 or arm64 Linux machine, install the
+[build toolchains](development.md#build-and-test), then run:
 
 ```sh
 scripts/build-ebpf.sh
@@ -66,7 +68,7 @@ Keep the executable and object together when installing the archive.
 
 ## ARM e2e from an x86_64 host
 
-In addition to the README's tools, install `qemu-system-arm`,
+In addition to the [build tools](development.md#build-and-test), install `qemu-system-arm`,
 `gcc-aarch64-linux-gnu`, and `ubuntu-keyring`. The helper below downloads
 signature-verified Ubuntu 24.04 arm64 packages into an isolated directory and
 extracts them there. It does not install packages into the host system and does

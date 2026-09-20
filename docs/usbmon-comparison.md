@@ -7,10 +7,10 @@ usbscope's own output.
 
 The ordinary VM configuration still has `CONFIG_USB_MON=n` and checks that at
 boot. The comparison configuration requires `CONFIG_USB_MON=y` and checks both
-the config and the device node. Keep their build directories separate:
+the config and the device node. First [build the CLI and BPF object](development.md#build-and-test),
+then keep the kernel build directories separate:
 
 ```sh
-# Build the userspace binary and BPF object as described in the README first.
 USBMON=y tests/vm/build-kernel.sh /path/to/linux-source target/vm-kernel-usbmon
 python3 tests/vm/run.py --release --live --audio --filters --sg \
   --compare-tcpdump \
