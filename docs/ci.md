@@ -7,18 +7,24 @@ count as kernel coverage.
 ## Matrix and triggers
 
 Each kernel runs on three targets: x86_64/4 KiB, arm64/4 KiB, and arm64/64 KiB.
-Each target runs with USB_MON disabled and enabled, giving six jobs per kernel.
-ARM uses 48-bit VA; the builder and guest assertions check the selected settings.
+Kernels that permit arm64 big endian also run on aarch64_be/4 KiB and
+aarch64_be/64 KiB. Each target runs with USB_MON disabled and enabled, giving
+six or ten jobs per kernel. ARM uses 48-bit VA; builder and guest assertions
+check the selected settings, including kernel and process byte order.
 
-| Kernel pin | Purpose | PR / main push | Nightly / full |
-| --- | --- | --- | --- |
-| 6.6.142 | Keep the minimum validated release from regressing | Yes | Yes |
-| 6.6.157 | Current 6.6 LTS patch | | Yes |
-| 6.8 | Retain the original cross-kernel regression target | | Yes |
-| 6.12.110 | 6.12 LTS | | Yes |
-| 6.18.52 | 6.18 LTS | Yes | Yes |
-| 7.2.6 | Current stable | | Yes |
-| **Jobs** | | **12** | **36** |
+| Kernel pin | Purpose | ARM big endian | PR / main push | Nightly / full |
+| --- | --- | --- | --- | --- |
+| 6.6.142 | Keep the minimum validated release from regressing | Yes | Yes | Yes |
+| 6.6.157 | Current 6.6 LTS patch | Yes | | Yes |
+| 6.8 | Retain the original cross-kernel regression target | Yes | | Yes |
+| 6.12.110 | 6.12 LTS | Yes | | Yes |
+| 6.18.52 | 6.18 LTS | No: upstream `BROKEN` dependency | Yes | Yes |
+| 7.2.6 | Current stable | No: upstream `BROKEN` dependency | | Yes |
+| **Jobs** | | | **16** | **52** |
+
+The [big-endian guide](big-endian.md) explains the kernel restriction and separate
+toolchain. The manifest records this capability explicitly; unsupported requests
+fail before building, and no job bypasses the kernel's `BROKEN` dependency.
 
 Pins were checked against [kernel.org releases](https://www.kernel.org/releases.json)
 on 2026-09-20. The manifest is [scripts/ci/kernels.json](../scripts/ci/kernels.json);
@@ -46,10 +52,13 @@ USB device, host BPF attachment, KVM, or privileged VM runner is required.
 
 ## Build once, test across kernels
 
-Two build jobs produce architecture-specific release archives and VM helpers.
-Every kernel job downloads these artifacts. All kernels of an architecture use
+Three build jobs produce architecture/endian-specific release archives and VM helpers.
+Every kernel job downloads these artifacts. All kernels of a target use
 the **same CLI and BPF bytes**, exercising CO-RE without per-kernel recompilation.
-The ARM guest userspace comes from signature-verified Ubuntu 24.04 packages.
+Little-endian ARM guests use signature-verified Ubuntu 24.04 packages. Big-endian
+guests use the checksum-pinned Bootlin SDK and statically built BusyBox/tcpdump.
+The big-endian build job additionally runs unit tests and all 23 CLI/TShark e2e
+cases through qemu-user.
 Tar archives preserve executable modes and library symlinks across artifact
 upload/download. The x86_64 CLI also performs offline verification of ARM captures.
 
@@ -63,13 +72,13 @@ match across configurations. Only the default branch writes caches, so fork PRs
 can reuse shared entries without filling the repository with private variants.
 
 Restored bundles are verified before boot. The guest independently asserts its
-release, page size, USB_MON state, and readable BTF. Cache hits need no kernel
+release, page size, byte order, USB_MON state, and readable BTF. Cache hits need no kernel
 source tree or Rust/BPF compilation. Build jobs retain Cargo and linker caches;
 complete kernel build trees are deliberately excluded from the kernel cache.
 
 ## Required tests and diagnostics
 
-Every VM runs probe smoke, architecture/ABI rejection, control and bulk traffic,
+Every VM runs probe smoke, architecture/endian/ABI rejection, control and bulk traffic,
 full 2,097,664-byte SG payloads in both directions, 137 sparse ISO audio frames,
 filter checks, raw replay, guest/host pcapng equivalence, TShark decoding, and
 forced ring loss. USB_MON=y also requires independent tcpdump comparison and
@@ -82,7 +91,7 @@ All jobs upload logs and available captures on failure as well as success.
 applicable, `contiguous/` captures, guest logs, comparison JSON, kernel config,
 and metadata. Build output is in `kernel-build.log`, test output in `test.log`.
 The job summary records the release checksums and kernel identity. Artifacts
-expire after seven days. `kernel-e2e` fails if preparation, either build, or any
+expire after seven days. `kernel-e2e` fails if preparation, any build, or any
 selected VM job fails or is skipped.
 
 ## Local reproduction and updates
@@ -109,7 +118,8 @@ tests. To rerun a cached job, just call `run-vm.sh`; it verifies the bundle firs
 
 When updating a kernel, edit its version and the tarball digest from kernel.org's
 `v6.x/sha256sums.asc` or `v7.x/sha256sums.asc`, then run the relevant architectures
-and comparison cases before committing. Keep 6.6.142 pinned as the lower bound.
+and comparison cases before committing. Check its arm64 `CPU_BIG_ENDIAN`
+dependencies and set `arm64_big_endian` accordingly. Keep 6.6.142 pinned as the lower bound.
 Do not resolve a moving `latest` inside PR jobs: a failed run must identify the
 exact source used. Nightly runs cover the committed pins; upstream release bumps
 still require a manifest update. Update this table, the
@@ -120,8 +130,8 @@ records with it.
 
 The hosted workflow has not yet run: this checkout has no Git remote configured.
 Local runs verify the workflow's scripts and QEMU test path; they do not establish
-that every one of the 36 hosted combinations has passed. The final BPF objects,
-unchanged across kernels within each architecture, passed these ten local configurations:
+that every one of the 52 hosted combinations has passed. Before the big-endian
+extension, one BPF object per little-endian architecture passed these ten local configurations:
 
 | Kernel | x86_64 | arm64 |
 | --- | --- | --- |
@@ -137,3 +147,11 @@ cells passed the independent SG/audio comparison. The 6.12.110 x86_64 and
 The final objects include fixes for the ARM 6.9+ vmemmap layout and the ring
 reservation bounds exposed by the 7.2 verifier. Exact evidence and remaining
 hardware/traffic limitations are recorded in [implementation.md](implementation.md).
+
+After adding big-endian support, the arm64 big-endian object passed 6.6.142/4 KiB
+with USB_MON=n and 6.12.110/64 KiB with USB_MON=y. Both passed SG, audio, filters,
+cross-endian replay, TShark, and forced-loss tests. The latter also passed the
+SG/audio and contiguous tcpdump comparisons with corruption checks. The same
+CLI/BPF bytes were used in both kernels. Little-endian x86_64 6.6.142/4 KiB and
+arm64 6.12.110/4 KiB were rerun with USB_MON=n after the encoding changes.
+Other newly added big-endian combinations await the hosted matrix.

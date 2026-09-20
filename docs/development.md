@@ -10,7 +10,8 @@ linking are described in the [architecture guide](architecture.md).
 
 ## Build and test
 
-Userspace Rust is pinned to 1.98.1. The BPF build uses Rust
+Little-endian userspace Rust is pinned to 1.98.1. Big-endian arm64 uses a
+[separate nightly and cross SDK](big-endian.md). The BPF build uses Rust
 `nightly-2025-12-01`, `bpf-linker 0.9.15`, and Clang 18. Install Clang 18 and
 TShark through your system package manager, then build both components:
 
@@ -79,11 +80,13 @@ explains synchronization, field/payload matching, and explicit handling of
 usbmon/libpcap truncation. It also documents the negative tests for the checker.
 
 GitHub Actions runs userspace checks and a tiered kernel matrix. PRs and pushes
-to `main` run **12 VM jobs**: 6.6.142 and 6.18.52, each on x86_64, arm64/4 KiB,
-and arm64/64 KiB, with USB_MON disabled and enabled. Nightly and default manual
-runs execute **36 jobs**, adding 6.6.157, 6.8, 6.12.110, and 7.2.6. Every enabled
+to `main` run **16 VM jobs**: 6.6.142 and 6.18.52 on little-endian x86_64,
+arm64/4 KiB, and arm64/64 KiB, plus big-endian ARM/4 KiB/64 KiB on 6.6.142,
+all with USB_MON disabled and enabled. Nightly and default manual runs execute
+**52 jobs**, adding 6.6.157, 6.8, 6.12.110, and 7.2.6; big endian is excluded
+where the kernel requires `BROKEN`. Every enabled
 job requires independent tcpdump comparison for both SG/audio and contiguous
-bulk buffers. Each architecture builds its release and BPF object once for all
+bulk buffers. Each architecture/endian target builds its release and BPF object once for all
 kernels. The stable `kernel-e2e` check requires every selected job to pass.
 
 The [CI guide](ci.md) explains version pins, compact kernel caches, artifacts,

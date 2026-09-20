@@ -273,7 +273,7 @@ to 52-bit VA; a job labeled VA48 must actually boot a VA48 kernel.
 
 ## P5.2: regular kernel matrix
 
-The [CI guide](ci.md) defines 12 PR/main jobs and 36 nightly/full jobs. Each
+At this stage, the matrix defined 12 PR/main jobs and 36 nightly/full jobs. Each
 architecture is built once; all kernel jobs consume the same release and probe
 artifacts. The guest runner accepts prebuilt smoke programs and ISO modules, and
 asserts the booted release and page size as well as USB_MON and BTF availability.
@@ -315,3 +315,58 @@ and ISO metadata retained all 137 frames despite the reference's 128-frame limit
 Release and VM-helper archives were extracted into fresh directories. ELF
 architecture, checksums, executable modes, documentation, library symlinks, and
 complete guest dependency assembly were verified for both architectures.
+
+## P6: arm64 big endian
+
+`aarch64_be` now builds a big-endian Rust CLI and a `bpfeb` object with matching
+C CO-RE accessors. Kernel structures, map values, predicates, and counters retain
+native byte order. Ring records, build metadata, raw archives, and pcapng use
+explicit little-endian encoding; USB setup and payload bytes are unchanged.
+The raw ABI remains version 1. The loader rejects the wrong byte order before
+attachment, alongside architecture and configuration ABI checks.
+
+Live testing exposed four implementation/toolchain assumptions that were fixed:
+
+- USB VID/PID and the mass-storage fixture's CBW fields need USB byte order.
+- By-value metadata conversion exceeded the BPF combined stack limit on big
+  endian. Converting initialized metadata in the ring reservation reduced the
+  emitting function's stack from 344 to 272 bytes.
+- The old userspace nightly produced incorrect ARM big-endian NEON string
+  searches in ELF parsing. Userspace now uses `nightly-2026-09-18`/`build-std`;
+  the independently pinned BPF toolchain is unchanged.
+- crc32fast's ARM native-word CRC path rejected valid `/proc/config.gz` data.
+  Big-endian flate2 uses zlib-rs instead. An independent gzip vector and damaged
+  checksum exercise this boundary in unit tests. Rustix uses its libc backend.
+
+The pinned Bootlin SDK's shared loader assumes 4 KiB pages. Big-endian release
+and VM executables are statically linked with 64 KiB segment alignment, making
+the same binaries usable on both tested page sizes. VM tools come from verified
+BusyBox/libpcap/tcpdump source archives. libpcap is pinned to 1.10.4, matching the
+LE baseline: 1.10.5 omitted descriptors from the original length of an ISO
+submission. The comparator continues to reject `caplen > len` and now decodes
+big-endian reference pcap and USB headers.
+
+The same big-endian object and CLI passed full SG/audio/filter/replay/loss tests
+on **6.6.142/4 KiB/USB_MON=n** and **6.12.110/64 KiB/USB_MON=y**. Captures retained
+all 2,097,664 bytes in each direction and all 137 ISO descriptors. Normal capture
+counters were zero for ring/read/unsupported/state loss. Guest and x86_64 host
+replay/filter output matched byte for byte; TShark decoded the files. The 6.12
+run additionally passed SG/audio and contiguous tcpdump comparisons, including
+ten and eight deliberately corrupted capture checks respectively. Little-endian
+x86_64 6.6.142/4 KiB and arm64 6.12.110/4 KiB passed the full USB_MON=n suite after
+the encoding changes. Seven Rust tests and all 23 CLI/TShark cases passed on
+both the native and actual big-endian binaries.
+
+All three release/helper packages built through `scripts/ci/build-userspace.sh`.
+Fresh extraction verified checksums, ELF byte order, executable modes, and both
+language guides. The packaged big-endian release passed the CI wrapper's full
+SG/audio and contiguous comparisons against the verified 6.12.110/64 KiB bundle.
+
+The regular matrix expands to **16 PR/main and 52 nightly/full VM jobs**, with
+separate x86_64, aarch64, and aarch64_be release builds. Big-endian kernels cover
+4 KiB/64 KiB and USB_MON=n/y on 6.6.142, 6.6.157, 6.8, and 6.12.110. The pinned
+6.18.52 and 7.2.6 require `BROKEN` for arm64 big endian and remain LE-only.
+The manifest records that restriction; cache verification and guest assertions
+check byte order. Nine CI contract tests, Actionlint, ShellCheck, formatting,
+and native Clippy pass. Hosted Actions remain unrun; additional matrix cells
+and physical hardware remain distinct from the local evidence above.

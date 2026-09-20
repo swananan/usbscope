@@ -4,37 +4,43 @@
       "version": "6.6.142",
       "role": "minimum validated",
       "pr": true,
-      "sha256": "b2f6607a75cd27b2e368cf2d25e1637e1e0da9dfed4cda536658879eee6f2b70"
+      "sha256": "b2f6607a75cd27b2e368cf2d25e1637e1e0da9dfed4cda536658879eee6f2b70",
+      "arm64_big_endian": true
     },
     {
       "version": "6.6.157",
       "role": "6.6 LTS",
       "pr": false,
-      "sha256": "b74a43d0630809b7871cc906ac155e956cbc0b2e78a7451f5e6c8bfcb1208c30"
+      "sha256": "b74a43d0630809b7871cc906ac155e956cbc0b2e78a7451f5e6c8bfcb1208c30",
+      "arm64_big_endian": true
     },
     {
       "version": "6.8",
       "role": "historical regression",
       "pr": false,
-      "sha256": "c969dea4e8bb6be991bbf7c010ba0e0a5643a3a8d8fb0a2aaa053406f1e965f3"
+      "sha256": "c969dea4e8bb6be991bbf7c010ba0e0a5643a3a8d8fb0a2aaa053406f1e965f3",
+      "arm64_big_endian": true
     },
     {
       "version": "6.12.110",
       "role": "6.12 LTS",
       "pr": false,
-      "sha256": "8cee19e1839bb6ff4d5254d761933ae6ab670492d5ed030e09a80538320d5c4c"
+      "sha256": "8cee19e1839bb6ff4d5254d761933ae6ab670492d5ed030e09a80538320d5c4c",
+      "arm64_big_endian": true
     },
     {
       "version": "6.18.52",
       "role": "6.18 LTS",
       "pr": true,
-      "sha256": "2b69564f7d4fea0c859b1959ba33709ee6e9139bd100e30a853b57159a8221b8"
+      "sha256": "2b69564f7d4fea0c859b1959ba33709ee6e9139bd100e30a853b57159a8221b8",
+      "arm64_big_endian": false
     },
     {
       "version": "7.2.6",
       "role": "stable",
       "pr": false,
-      "sha256": "039aef84f2b0994aeda3f4fcfc3d02ec9d7a9bbb9020ea264c43f446c860f606"
+      "sha256": "039aef84f2b0994aeda3f4fcfc3d02ec9d7a9bbb9020ea264c43f446c860f606",
+      "arm64_big_endian": false
     }
   ]
 }

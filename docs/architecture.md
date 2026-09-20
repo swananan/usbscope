@@ -21,14 +21,15 @@ capture policy, maps, and ring transport; C provides kernel structure access.
 
 Clang emits BTF CO-RE relocations for kernel field offsets and type sizes from
 the C accessors. `bpf-linker` links them into the Rust BPF object, and Aya applies
-the relocations using the running kernel's BTF at load time. For each supported
-architecture, the **same BPF object has passed e2e tests on Linux 6.6.142, 6.8,
-6.12.110, 6.18.52, and 7.2.6**; the [CI guide](ci.md) records the tested configurations.
+the relocations using the running kernel's BTF at load time. The little-endian
+x86_64 and arm64 objects have each passed e2e on Linux 6.6.142, 6.8, 6.12.110,
+6.18.52, and 7.2.6. The arm64 big-endian object is tested separately; the
+[CI guide](ci.md#validation-status) records the exact configurations.
 On compatible kernels of the target architecture, this avoids recompiling for
 each kernel layout. Capture hosts do not need kernel headers, Clang, or libbpf.
-Objects are specific to the CPU architecture because probe register conventions
-differ; the CLI rejects an object built for the wrong architecture or
-configuration ABI before loading it.
+Objects are specific to both CPU architecture and byte order: `bpfel` for little
+endian, `bpfeb` for big endian. The CLI rejects incompatible architecture, byte
+order, or configuration ABI before loading an object.
 
 CO-RE handles structure layout changes. The required BPF helpers, attachable USB
 functions, and their execution order must still be present. The completion hook
@@ -41,6 +42,13 @@ Payloads and ISO metadata travel in chunks through the BPF ring buffer and are
 reassembled in userspace. Payload length and ISO descriptor count have no
 application-imposed snap limit. The [capture semantics](usage.md#capture-semantics)
 and [usage limits](usage.md#current-usage-limits) describe completeness and format limits.
+
+Ring records, raw archives, build metadata, and generated pcapng use explicit
+little-endian encoding on every host. Kernel reads, map configuration, predicates,
+and counters use native byte order. USB payload and setup bytes are unchanged.
+Metadata is converted at publication, in ring memory, to stay within the BPF
+stack limit. See the [big-endian guide](big-endian.md) for toolchain requirements
+and cross-endian replay tests.
 
 Safe necessary predicates run in BPF; exact matching runs after reassembly.
 See the [filter grammar](filters.md) for supported predicates and missing-data rules.

@@ -15,14 +15,15 @@
 更早的上游内核需要回移该辅助函数。但具备这一辅助函数，并不足以证明内核与本程序兼容。
 
 **经过验证的最低内核版本为 Linux 6.6.142。** 测试平台为
-**小端 x86_64 和 arm64**，其中 arm64 覆盖 4 KiB 和 64 KiB 页。
+**x86_64（小端）和 arm64（小端或大端）**，其中 arm64 覆盖 4 KiB 和 64 KiB 页。
+[大端支持](big-endian.zh-CN.md)有额外的内核版本限制。
 内核矩阵和已在本地验证的具体配置见 [CI 指南（英文）](ci.md)。
 这些记录之外的版本仍未验证，包括从 5.17 到早期 6.6 的版本。
 当前部署应以已经验证的版本为基准；实时抓包还需满足以下要求：
 
 | 要求 | 当前限制 |
 | --- | --- |
-| 平台 | Linux，小端 x86_64 或 arm64（aarch64）。各架构使用各自的 CLI 和 BPF 目标文件。不支持 32 位 ARM 或其他操作系统。 |
+| 平台 | Linux x86_64、arm64 小端（`aarch64`）或 arm64 大端（`aarch64_be`）。CLI 与 BPF 目标文件的架构和字节序必须匹配。不支持 32 位 ARM 或其他操作系统。 |
 | USB 核心 | 必须编译进内核（`CONFIG_USB=y`）。当前加载器从 vmlinux BTF 解析 USB 挂载点，尚未实现从 USB 核心模块加载相应 BTF。`CONFIG_USB_MON` 可开可关。 |
 | 内核 BTF | `/sys/kernel/btf/vmlinux` 必须可读，并包含 USB 挂载点的类型和函数信息（`CONFIG_DEBUG_INFO_BTF`）。 |
 | BPF 与跟踪功能 | 需要 BPF 系统调用/JIT、ringbuf、`bpf_loop`、fentry/fexit 和 kprobes。已测试的配置见 [VM 内核构建脚本](../tests/vm/build-kernel.sh)。 |

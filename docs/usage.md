@@ -18,7 +18,8 @@ Earlier upstream kernels need a backport of that helper. Helper availability
 alone is insufficient to establish compatibility with this program.
 
 **Minimum validated kernel: Linux 6.6.142.** Tested platforms are
-**little-endian x86_64 and arm64**, including 4 KiB and 64 KiB pages on arm64.
+**x86_64 (little endian) and arm64 (little or big endian)**, including 4 KiB and
+64 KiB pages on arm64. [Big-endian support](big-endian.md) has additional kernel restrictions.
 See the [CI guide](ci.md) for the kernel matrix and
 the exact configurations validated locally. Versions outside those results,
 including 5.17 through earlier 6.6 releases, remain unverified.
@@ -27,7 +28,7 @@ following requirements for live capture:
 
 | Requirement | Current restriction |
 | --- | --- |
-| Platform | Linux, little-endian x86_64 or arm64 (aarch64). Each architecture has its own CLI and BPF object. 32-bit ARM and other operating systems are not supported. |
+| Platform | Linux x86_64, arm64 little endian (`aarch64`), or arm64 big endian (`aarch64_be`). CLI and BPF object must match both architecture and byte order. 32-bit ARM and other operating systems are not supported. |
 | USB core | Built into the kernel (`CONFIG_USB=y`). The current loader resolves USB hooks from vmlinux BTF; loading their BTF from a USB core module is not implemented. `CONFIG_USB_MON` is optional. |
 | Kernel BTF | Readable `/sys/kernel/btf/vmlinux`, with type/function information for the USB hooks (`CONFIG_DEBUG_INFO_BTF`). |
 | BPF and tracing | BPF syscall/JIT, ringbuf, `bpf_loop`, fentry/fexit, and kprobes must be available. See the [VM kernel configuration](../tests/vm/build-kernel.sh) for the tested configuration. |

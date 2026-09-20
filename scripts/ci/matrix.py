@@ -6,7 +6,8 @@ from pathlib import Path
 import re
 
 MANIFEST = Path(__file__).with_name('kernels.json')
-TARGETS = [('x86_64', '4K'), ('aarch64', '4K'), ('aarch64', '64K')]
+TARGETS = [('x86_64', '4K'), ('aarch64', '4K'), ('aarch64', '64K'),
+           ('aarch64_be', '4K'), ('aarch64_be', '64K')]
 
 
 def kernels(path=MANIFEST):
@@ -23,6 +24,8 @@ def kernels(path=MANIFEST):
             raise ValueError(f'invalid SHA-256 for {version}')
         if type(entry['pr']) is not bool:
             raise ValueError(f'pr must be a boolean for {version}')
+        if type(entry.get('arm64_big_endian')) is not bool:
+            raise ValueError(f'arm64_big_endian must be a boolean for {version}')
     if not entries or not any(k['pr'] for k in entries):
         raise ValueError('the full and PR matrices must not be empty')
     return entries
@@ -34,6 +37,7 @@ def matrix(profile):
          'pages': pages, 'usbmon': usbmon}
         for k in kernels() if profile == 'full' or k['pr']
         for arch, pages in TARGETS for usbmon in ('n', 'y')
+        if arch != 'aarch64_be' or k['arm64_big_endian']
     ]}
 
 

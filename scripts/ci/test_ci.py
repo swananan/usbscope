@@ -19,13 +19,19 @@ class MatrixTests(unittest.TestCase):
         self.assertTrue(pr)
         self.assertTrue(all(row in full for row in pr))
         self.assertIn('6.6.142', {row['kernel'] for row in pr})
+        self.assertEqual(len(pr), 16)
+        self.assertEqual(len(full), 52)
         self.assertEqual({row['kernel'] for row in full}, {k['version'] for k in matrix.kernels()})
         for rows in (pr, full):
             ids = {(r['kernel'], r['arch'], r['pages'], r['usbmon']) for r in rows}
             self.assertEqual(len(ids), len(rows))
             for version in {r['kernel'] for r in rows}:
+                entry = next(k for k in matrix.kernels() if k['version'] == version)
+                targets = [('x86_64', '4K'), ('aarch64', '4K'), ('aarch64', '64K')]
+                if entry['arm64_big_endian']:
+                    targets += [('aarch64_be', '4K'), ('aarch64_be', '64K')]
                 self.assertEqual({(a, p, m) for v, a, p, m in ids if v == version}, {
-                    (a, p, m) for a, p in [('x86_64', '4K'), ('aarch64', '4K'), ('aarch64', '64K')]
+                    (a, p, m) for a, p in targets
                     for m in ('n', 'y')})
 
     def test_reject_bad_manifest(self):
@@ -33,7 +39,8 @@ class MatrixTests(unittest.TestCase):
             path = Path(temp) / 'kernels.json'
             good = matrix.kernels()[0]
             for bad in [[], [good, good], [dict(good, sha256='unchecked')],
-                        [dict(good, version='../../linux')], [dict(good, pr='false')]]:
+                        [dict(good, version='../../linux')], [dict(good, pr='false')],
+                        [dict(good, arm64_big_endian='false')]]:
                 with self.subTest(bad=bad), self.assertRaises(ValueError):
                     path.write_text(json.dumps({'kernels': bad}))
                     matrix.kernels(path)
@@ -50,7 +57,8 @@ class KernelCacheTests(unittest.TestCase):
         (self.bundle / 'usbscope_iso.ko').write_bytes(b'kernel module')
         (self.bundle / 'config').write_text(
             '# CONFIG_USB_MON is not set\nCONFIG_DEBUG_INFO_BTF=y\nCONFIG_IKCONFIG_PROC=y\n'
-            'CONFIG_ARM64=y\nCONFIG_ARM64_64K_PAGES=y\nCONFIG_ARM64_VA_BITS=48\n')
+            'CONFIG_ARM64=y\nCONFIG_ARM64_64K_PAGES=y\nCONFIG_ARM64_VA_BITS=48\n'
+            '# CONFIG_CPU_BIG_ENDIAN is not set\n')
         self.metadata = dict(self.expected, kernel_release='6.6.142', files={
             name: kernel.sha256(self.bundle / name) for name in ('kernel', 'config', 'usbscope_iso.ko')})
         self.write_metadata(self.metadata)
@@ -72,6 +80,20 @@ class KernelCacheTests(unittest.TestCase):
         (self.bundle / 'kernel').write_bytes(b'other kernel')
         with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
             kernel.verify(self.bundle, self.expected)
+
+    def test_big_endian_cache_requires_big_endian_kernel(self):
+        expected = dict(self.expected, arch='aarch64_be')
+        metadata = dict(self.metadata, arch='aarch64_be')
+        self.write_metadata(metadata)
+        with self.assertRaisesRegex(ValueError, 'CPU_BIG_ENDIAN'):
+            kernel.verify(self.bundle, expected)
+        config = self.bundle / 'config'
+        config.write_text(config.read_text().replace('# CONFIG_CPU_BIG_ENDIAN is not set',
+                                                    'CONFIG_CPU_BIG_ENDIAN=y'))
+        metadata = copy.deepcopy(metadata)
+        metadata['files']['config'] = kernel.sha256(config)
+        self.write_metadata(metadata)
+        self.assertEqual(kernel.verify(self.bundle, expected), metadata)
 
     def test_config_disagrees_with_metadata(self):
         config = self.bundle / 'config'

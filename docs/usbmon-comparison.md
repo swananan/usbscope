@@ -39,7 +39,9 @@ forced ring-loss scenario also run; tcpdump comparison covers the first,
 unfiltered capture.
 
 The Python checker independently reads tcpdump's pcap and usbscope's pcapng;
-it does not import the product's readers. It requires matching endpoint sets,
+it does not import the product's readers. It accepts both byte orders for the
+tcpdump pcap and its USB pseudoheaders; usbscope output stays little endian.
+It requires matching endpoint sets,
 per-endpoint submission counts, submission/completion pairing, phase, status,
 transfer length, flags, setup bytes, and applicable interval/ISO metadata.
 
@@ -81,8 +83,10 @@ the kernel matrix or reference collector.
 ## Regression coverage and artifacts
 
 GitHub Actions uses [pinned kernel profiles](ci.md) with USB_MON both disabled and enabled,
-across x86_64, arm64/4 KiB, and arm64/64 KiB: 12 jobs on pull requests and pushes
-to `main`, and 36 in the nightly/full profile. Manual dispatch selects either
+across x86_64 and arm64/4 KiB/64 KiB, including big endian on eligible kernels:
+16 jobs on pull requests and pushes to `main`, and 52 in the nightly/full profile.
+The [big-endian guide](big-endian.md) records its pinned reference tools and coverage.
+Manual dispatch selects either
 profile and defaults to full. The expanded hosted workflow has not yet run. The enabled
 jobs require the tcpdump comparison; they do not skip it if a tool is missing.
 Both configurations retain the full original live suite.

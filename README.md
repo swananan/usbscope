@@ -17,12 +17,12 @@ kernel was built without `CONFIG_USB_MON`**. It records host-side USB requests
 
 | Requirement | Support |
 | --- | --- |
-| Operating system and CPU | Linux, little-endian x86_64 and arm64 (aarch64). No 32-bit ARM, Windows, or macOS support. |
-| Kernel | **Minimum validated: Linux 6.6.142.** See the [tested configurations](docs/ci.md#validation-status). |
+| Operating system and CPU | Linux: x86_64 (little endian), arm64 (little or big endian). No 32-bit ARM, Windows, or macOS support. |
+| Kernel | **Minimum validated: Linux 6.6.142.** See the [tested configurations](docs/ci.md#validation-status) and [big-endian kernel restrictions](docs/big-endian.md). |
 | Page size | x86_64: 4 KiB; arm64: 4 KiB or 64 KiB. |
 | Kernel configuration | Built-in USB core (`CONFIG_USB=y`), kernel BTF, and BPF/tracing support. `CONFIG_USB_MON` is optional. |
 | Live-capture access | Root, readable kernel BTF, and access to the required kernel symbol addresses. |
-| Cross-kernel compatibility | Supports **eBPF CO-RE** within each supported CPU architecture. |
+| Cross-kernel compatibility | Supports **eBPF CO-RE** within each supported CPU architecture and byte order. |
 
 Linux 5.17 is the upstream feature floor, **not a validated minimum**; 5.17 through
 earlier 6.6 releases remain unverified. Current live-capture validation uses QEMU;
@@ -39,7 +39,7 @@ privileges, kernel BTF, USB hardware, or a BPF object.
 | Filter reference | [USB filter grammar](docs/filters.md) |
 | Building and testing | [Toolchains, packaging, and e2e tests](docs/development.md) |
 | Implementation | [Aya/Rust, CO-RE, ring buffer, and capture hooks](docs/architecture.md) |
-| Platform support | [Architecture coverage, cross-compilation, and ARM tests](docs/platforms.md) |
+| Platform support | [Architecture coverage and ARM tests](docs/platforms.md) · [Big-endian builds and tests](docs/big-endian.md) |
 | Kernel CI and capture comparison | [Kernel matrix](docs/ci.md) · [tcpdump/usbmon and TShark validation](docs/usbmon-comparison.md) |
 | Development record | [Implementation stages and validation evidence](docs/implementation.md) |
 | License | [MIT OR Apache-2.0 and component licenses](docs/licensing.md#english) |

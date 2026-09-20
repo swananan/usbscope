@@ -1,9 +1,10 @@
 # Linux architecture support
 
-usbscope supports little-endian **x86_64 and arm64 (aarch64)**. The CLI, its
-libraries, and the BPF object must match the target architecture. CO-RE adapts
+usbscope supports **x86_64 (little endian) and arm64 (little or big endian)**.
+The CLI, its libraries, and the BPF object must match the target architecture
+and byte order. CO-RE adapts
 kernel structure layouts within an architecture; it does not change probe
-register conventions. The loader rejects mismatched BPF architecture or
+register conventions or byte order. The loader rejects mismatched BPF architecture, endian, or
 configuration ABI metadata before attaching anything.
 
 ## Runtime coverage
@@ -11,7 +12,8 @@ configuration ABI metadata before attaching anything.
 | Target | Kernel coverage | Bulk SG requirements |
 | --- | --- | --- |
 | x86_64 | 6.6.142, 6.8, 6.12.110, 6.18.52, 7.2.6; 4 KiB pages | SPARSEMEM_VMEMMAP; readable `vmemmap_base` and `page_offset_base` symbol addresses |
-| arm64 | 6.6.142/6.8 with 4 KiB and 64 KiB; 6.12.110 with 4 KiB; 6.18.52/7.2.6 with 64 KiB | SPARSEMEM_VMEMMAP; readable running kernel configuration; tested with `CONFIG_ARM64_VA_BITS=48` |
+| arm64 little endian | 6.6.142/6.8 with 4 KiB and 64 KiB; 6.12.110 with 4 KiB; 6.18.52/7.2.6 with 64 KiB | SPARSEMEM_VMEMMAP; readable running kernel configuration; tested with `CONFIG_ARM64_VA_BITS=48` |
+| arm64 big endian | 6.6.142 with 4 KiB; 6.12.110 with 64 KiB | Same ARM SG requirements; see [big-endian kernel restrictions](big-endian.md) |
 
 arm64 reads `/proc/config.gz`, falling back to `/boot/config-$(uname -r)` if the
 proc file cannot be opened. It checks the configured page size against the
@@ -30,17 +32,17 @@ available. Tagged KASAN SG memory is unsupported.
 
 The ARM tests use QEMU's `virt` machine, TCG, and a virtual xHCI controller.
 USB_MON-disabled capture and independent tcpdump comparison have passed in the
-[recorded configurations](ci.md#validation-status). The same arm64 BPF object works across the tested page
+[recorded configurations](ci.md#validation-status). The same arm64 BPF object, per byte order, works across the tested page
 sizes and kernels. Linux 6.8 with 64 KiB pages also passed with kernel pointer
 authentication enabled. Physical ARM controllers, kernel BTI, 16 KiB pages,
 other VA widths, and tagged KASAN still need validation. See the
 [usage limits](usage.md#current-usage-limits) for the remaining USB/audio limitations.
-32-bit ARM, big-endian targets, Windows, and
-macOS are outside the current support scope.
+32-bit ARM, other big-endian architectures, Windows, and macOS are outside the
+current support scope.
 
 ## Build and package
 
-On a native x86_64 or arm64 Linux machine, install the
+On a native x86_64 or little-endian arm64 Linux machine, install the
 [build toolchains](development.md#build-and-test), then run:
 
 ```sh
@@ -50,7 +52,9 @@ scripts/package.sh
 
 The BPF output is `target/<arch>/usbscope.bpf.o`. A native build also refreshes
 `target/usbscope.bpf.o` for development. Cross builds leave that native copy
-alone. `arm64` is accepted as an alias for `aarch64` by the build/package scripts.
+alone. `arm64` is accepted as an alias for `aarch64` by the build/package scripts;
+`arm64_be` aliases `aarch64_be`. Big-endian builds use a separate Rust/SDK setup:
+see the [big-endian build and test guide](big-endian.md).
 
 Cross-building ARM releases on an x86_64 Ubuntu host additionally needs
 `gcc-aarch64-linux-gnu` and the Rust target:
@@ -60,10 +64,11 @@ rustup target add aarch64-unknown-linux-gnu
 scripts/package.sh aarch64
 ```
 
-The archives are `target/dist/usbscope-x86_64-linux.tar.gz` and
-`target/dist/usbscope-aarch64-linux.tar.gz`. Each contains the CLI, matching BPF
+The archives are `target/dist/usbscope-<arch>-linux.tar.gz`, where `<arch>` is
+`x86_64`, `aarch64`, or `aarch64_be`. Each contains the CLI, matching BPF
 object, English/Chinese READMEs, detailed documentation, licenses, and checksums.
-These are Linux GNU builds; libc requirements follow the compiler/sysroot.
+These are Linux GNU builds; little-endian libc requirements follow the
+compiler/sysroot, while the big-endian CLI is statically linked.
 Keep the executable and object together when installing the archive.
 
 ## ARM e2e from an x86_64 host
@@ -99,8 +104,9 @@ an extracted release, pass `--binary /path/to/usbscope` and
 
 ## Regular regression coverage
 
-The VM workflow defines 12 PR/main jobs and 36 nightly/full jobs across
-x86_64/4 KiB, arm64/4 KiB, and arm64/64 KiB, with USB_MON disabled/enabled.
+The VM workflow defines 16 PR/main jobs and 52 nightly/full jobs across
+x86_64/4 KiB and arm64/4 KiB/64 KiB in both byte orders where the pinned kernel
+supports them, with USB_MON disabled/enabled.
 The [CI guide](ci.md) lists the pinned kernels and reproduction commands. ARM jobs run on
 x86_64 hosts using the same cross-build and rootless QEMU path tested locally.
 They exercise packaged binaries, control and bulk traffic, SG buffers, 137
@@ -108,11 +114,11 @@ sparse ISO frames, filters, full 2,097,664-byte payloads, and strict loss handli
 The loss test sizes its ring to one guest page and pauses the consumer while
 generating traffic, so it also works with 64 KiB pages.
 
-The suite rejects wrong-architecture and incompatible-ABI objects before
+The suite rejects wrong-architecture, wrong-endian, and incompatible-ABI objects before
 attachment, replays raw archives inside the guest, and compares guest/host
 pcapng filtering byte for byte. USB_MON-enabled jobs additionally compare against
 tcpdump and run the corrupted-capture checks, with separate contiguous-buffer
 and SG/audio cases. Local results are recorded in [implementation.md](implementation.md);
-the expanded hosted workflow has not yet been run. Each architecture's packaged
+the expanded hosted workflow has not yet been run. Each architecture/endian target's packaged
 CLI and BPF object are reused across all kernels; cached kernel bundles contain
 the matching ISO fixture, so test jobs do not rebuild the BPF object or CLI.

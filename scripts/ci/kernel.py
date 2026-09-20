@@ -77,8 +77,10 @@ def verify(bundle, expected):
     config = (bundle / 'config').read_text().splitlines()
     usbmon = 'CONFIG_USB_MON=y' if expected['usbmon'] == 'y' else '# CONFIG_USB_MON is not set'
     required = [usbmon, 'CONFIG_DEBUG_INFO_BTF=y', 'CONFIG_IKCONFIG_PROC=y']
-    if expected['arch'] == 'aarch64':
+    if expected['arch'] in ('aarch64', 'aarch64_be'):
         required += ['CONFIG_ARM64=y', f'CONFIG_ARM64_{expected["pages"]}_PAGES=y', 'CONFIG_ARM64_VA_BITS=48']
+        required += ['CONFIG_CPU_BIG_ENDIAN=y' if expected['arch'] == 'aarch64_be'
+                     else '# CONFIG_CPU_BIG_ENDIAN is not set']
     else:
         required += ['CONFIG_X86_64=y']
     for setting in required:
@@ -92,12 +94,17 @@ def build(args, entry):
     work.mkdir(parents=True, exist_ok=True)
     source = source_tree(entry, work)
     output = work / f'build-{args.arch}-{args.pages}-usbmon-{args.usbmon}-{args.version}'
-    arch = 'arm64' if args.arch == 'aarch64' else 'x86'
-    env = dict(os.environ, ARCH=arch, ARM64_PAGE_SIZE=args.pages, USBMON=args.usbmon)
+    arch = 'arm64' if args.arch in ('aarch64', 'aarch64_be') else 'x86'
+    env = dict(os.environ, ARCH=arch, ARM64_PAGE_SIZE=args.pages, USBMON=args.usbmon,
+               ARM64_ENDIAN='big' if args.arch == 'aarch64_be' else 'little')
+    prefix = os.environ.get('CROSS_COMPILE', 'aarch64_be-buildroot-linux-gnu-'
+                            if args.arch == 'aarch64_be' else f'{args.arch}-linux-gnu-')
+    if args.arch != os.uname().machine:
+        env['CROSS_COMPILE'] = prefix
     subprocess.run([str(ROOT / 'tests/vm/build-kernel.sh'), str(source), str(output)], env=env, check=True)
     flags = [f'ARCH={arch}']
     if args.arch != os.uname().machine:
-        flags += [f'CROSS_COMPILE={args.arch}-linux-gnu-']
+        flags += [f'CROSS_COMPILE={prefix}']
     subprocess.run(['make', '-s', '-C', str(output), '-j' + os.environ.get('JOBS', '4'), *flags, 'modules'], check=True)
     with tempfile.TemporaryDirectory(prefix='iso-', dir=work) as temp:
         module = Path(temp)
@@ -105,7 +112,7 @@ def build(args, entry):
         subprocess.run(['make', '-s', '-C', str(output), *flags, f'M={module}', 'modules'], check=True)
         args.bundle.mkdir(parents=True, exist_ok=True)
         shutil.copy2(module / 'usbscope_iso.ko', args.bundle / 'usbscope_iso.ko')
-    image = 'arch/arm64/boot/Image' if args.arch == 'aarch64' else 'arch/x86/boot/bzImage'
+    image = 'arch/arm64/boot/Image' if arch == 'arm64' else 'arch/x86/boot/bzImage'
     shutil.copy2(output / image, args.bundle / 'kernel')
     shutil.copy2(output / '.config', args.bundle / 'config')
     metadata = identity(args, entry)
@@ -119,7 +126,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=['build', 'verify'])
     parser.add_argument('--version', required=True)
-    parser.add_argument('--arch', choices=['x86_64', 'aarch64'], required=True)
+    parser.add_argument('--arch', choices=['x86_64', 'aarch64', 'aarch64_be'], required=True)
     parser.add_argument('--pages', choices=['4K', '64K'], required=True)
     parser.add_argument('--usbmon', choices=['n', 'y'], required=True)
     parser.add_argument('--bundle', type=Path, default=ROOT / 'target/ci/kernel')
@@ -130,6 +137,8 @@ if __name__ == '__main__':
     entry = next((k for k in kernels() if k['version'] == args.version), None)
     if entry is None:
         parser.error('version is not pinned in scripts/ci/kernels.json')
+    if args.arch == 'aarch64_be' and not entry['arm64_big_endian']:
+        parser.error('this kernel does not enable arm64 CPU_BIG_ENDIAN without BROKEN')
     if args.command == 'build':
         build(args, entry)
     print(json.dumps(verify(args.bundle, identity(args, entry)), indent=2))
