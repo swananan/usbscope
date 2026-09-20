@@ -1,13 +1,76 @@
 # usbscope
 
-usbscope is an eBPF-based USB capture CLI for Linux kernels built without
-`CONFIG_USB_MON`. It targets this niche debugging scenario, with tcpdump-inspired
-commands, USB-aware filters, and Wireshark-compatible capture files.
+usbscope is an eBPF-based USB capture CLI for the **niche case where the Linux
+kernel was built without `CONFIG_USB_MON`**. It provides tcpdump-inspired
+commands, USB-aware filters, and Wireshark-compatible capture files without
+depending on usbmon.
 
-Live control, bulk, interrupt, and ISO capture is implemented, including x86_64
-bulk scatter-gather buffers. See [implementation and validation](docs/implementation.md)
-for the completed stages, test evidence, and remaining limitations. The tested
-baseline is little-endian x86_64 Linux 6.6.142 and 6.8 with `CONFIG_USB_MON=n`.
+Built with **Aya and Rust eBPF**, it supports **eBPF CO-RE (Compile Once, Run
+Everywhere)** through small C accessors and transports capture records through
+a **BPF ring buffer**. Control, bulk, interrupt, and ISO capture is implemented,
+including x86_64 bulk scatter-gather buffers.
+
+## Requirements and minimum kernel version
+
+**Minimum upstream kernel feature requirement: Linux 5.17**, because the BPF
+program requires [`bpf_loop`](https://github.com/torvalds/linux/blob/v5.17/kernel/bpf/bpf_iter.c#L681).
+Earlier upstream kernels need a backport of that helper. Helper availability
+alone is insufficient to establish compatibility with this program.
+
+**Minimum validated kernel: Linux 6.6.142.** The current e2e matrix covers
+**6.6.142 and 6.8 on little-endian x86_64**. Compatibility with other versions,
+including 5.17 through earlier 6.6 releases and newer kernels, remains unverified.
+Use the validated versions as the current deployment baseline and check the
+following requirements for live capture:
+
+| Requirement | Current restriction |
+| --- | --- |
+| Platform | Linux, little-endian x86_64. Release artifacts and runtime e2e coverage currently target this architecture. |
+| USB core | Built into the kernel (`CONFIG_USB=y`). The current loader resolves USB hooks from vmlinux BTF; loading their BTF from a USB core module is not implemented. `CONFIG_USB_MON` is optional. |
+| Kernel BTF | Readable `/sys/kernel/btf/vmlinux`, with type/function information for the USB hooks (`CONFIG_DEBUG_INFO_BTF`). |
+| BPF and tracing | BPF syscall/JIT, ringbuf, `bpf_loop`, fentry/fexit, and kprobes must be available. See the [VM kernel configuration](tests/vm/build-kernel.sh) for the tested configuration. |
+| Kernel symbols | Readable, nonzero addresses for the required functions in `/proc/kallsyms`. Redacted symbols prevent startup. |
+| Privileges | Live capture is tested as root. Kernel security policy must permit BPF tracing and kernel symbol access; restricted containers or kernel lockdown can prevent capture. |
+
+Offline reading with `-r` does not load BPF programs and does not need these
+live-capture privileges, kernel BTF, USB hardware, or a BPF object.
+
+## eBPF CO-RE support
+
+Clang emits BTF CO-RE relocations for kernel field offsets and type sizes from
+the C accessors. `bpf-linker` links them into the Rust BPF object, and Aya applies
+the relocations using the running kernel's BTF at load time. The **same BPF
+object has passed e2e tests on Linux 6.6.142 and 6.8**.
+On compatible kernels of the target architecture, this avoids recompiling for
+each kernel layout. Capture hosts do not need kernel headers, Clang, or libbpf.
+
+CO-RE handles structure layout changes. The required BPF helpers, attachable USB
+functions, and their execution order must still be present. The completion hook
+depends on kernel-internal behavior, so additional kernel versions/configurations
+need regression testing before compatibility can be claimed.
+
+## Current usage limits
+
+- **Observation level:** events describe host-side URB submissions, completions,
+  and submission errors. Electrical USB transactions, wire timing, and bus-level
+  retries are outside this capture model.
+- **Capture completeness:** payload length and ISO descriptor counts have no
+  application-imposed snap limit. Ring capacity, pending-event state, temporary
+  storage, disk space, and reader/format limits still apply. Read failures and
+  resource exhaustion are reported as loss; `--fail-on-loss` makes them an error.
+- **SG buffers:** supported on x86_64 SPARSEMEM_VMEMMAP with 4 KiB base pages and
+  visible `vmemmap_base`/`page_offset_base` symbols. ISO SG buffers and other
+  memory models are unsupported.
+- **Validation coverage:** live control, contiguous/SG bulk, and ISO OUT have
+  QEMU e2e coverage. Physical controllers, DMA bounce paths, live ISO IN,
+  interrupt traffic, separately allocated SG chains, enqueue failures, and
+  aarch64 still need validation.
+- **Audio context:** the device JSON is an initial sysfs snapshot. Configuration
+  and alternate-setting changes over time, UAC feedback decoding, and PCM/WAV
+  export are not implemented.
+
+See [implementation and validation](docs/implementation.md) for the evidence and
+[the filter grammar](docs/filters.md) for supported fields and missing-data rules.
 
 ## Capture semantics
 
@@ -83,11 +146,9 @@ sudo target/release/usbscope -i any --duration 30 --raw-output capture.usbraw -w
 ```
 
 Without `-w`, the CLI prints an event summary. `-c` counts complete events;
-`-B` configures ring capacity in KiB, not packet length. Capture needs kernel
-BTF, BPF tracing/JIT, kprobes, readable kernel symbol addresses, and sufficient
-privileges (root in the development setup). The BPF object is searched for beside
-the executable, falling back to `target/usbscope.bpf.o`, and can be supplied with
-`--bpf-object`.
+`-B` configures ring capacity in KiB, not packet length. The BPF object is searched
+for beside the executable, falling back to `target/usbscope.bpf.o`, and can be
+supplied with `--bpf-object`.
 
 IN data is copied at `usb_unanchor_urb` only when its immediate caller is
 `__usb_hcd_giveback_urb`, after DMA unmapping/copyback and before the driver
@@ -172,7 +233,5 @@ GitHub Actions runs userspace checks and defines a four-job VM matrix for
 6.6.142 and 6.8, each with USB_MON disabled and enabled. The enabled jobs add
 independent tcpdump capture comparison, including separate contiguous bulk runs.
 The comparison suites have passed locally on both kernels; the hosted workflow
-has not yet been run. Physical USB controllers, DMA bounce paths, live ISO IN,
-and aarch64 still need hardware/architecture
-coverage. Capture is implemented for interrupt URBs, but the VM fixtures exercise
-control, bulk, and ISO traffic.
+has not yet been run. The current validation boundaries are listed under
+[usage limits](#current-usage-limits).
