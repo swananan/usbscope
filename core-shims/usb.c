@@ -76,6 +76,12 @@ long core_read_urb(u64 address, struct event_meta *m, u64 *buffer, u32 *sg_count
     READ(devnum, dev->devnum);
     READ(m->vid, dev->descriptor.idVendor);
     READ(m->pid, dev->descriptor.idProduct);
+    /* USB descriptor fields retain USB byte order in kernel memory. Convert
+     * to native values before filters run; ring encoding happens in Rust. */
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    m->vid = __builtin_bswap16(m->vid);
+    m->pid = __builtin_bswap16(m->pid);
+#endif
     READ(ep, urb->ep);
     READ(attributes, ep->desc.bmAttributes);
     READ(epnum, ep->desc.bEndpointAddress);

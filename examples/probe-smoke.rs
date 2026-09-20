@@ -17,13 +17,16 @@ fn main() -> Result<()> {
         .nth(1)
         .context("expected BPF object path")?;
     let btf = Btf::from_sys_fs()?;
+    eprintln!("probe: kernel BTF parsed");
     let mut bpf = Ebpf::load_file(object)?;
+    eprintln!("probe: BPF object loaded");
     let program: &mut FEntry = bpf
         .program_mut("observe_submit")
         .context("missing probe")?
         .try_into()?;
     program.load("usb_hcd_submit_urb", &btf)?;
     program.attach()?;
+    eprintln!("probe: attached");
     let mut config = Array::<_, CaptureConfig>::try_from(bpf.map_mut("CONFIG").unwrap())?;
     config.set(
         0,

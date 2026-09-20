@@ -2,7 +2,8 @@
 """Compare independently captured tcpdump/usbmon and usbscope fixture traffic.
 
 This intentionally does not use the product's readers or filter implementation.
-Only the little-endian LINKTYPE 220 formats produced by these Linux VMs are read.
+The tcpdump pcap/USB headers may be little or big endian. usbscope emits
+canonical little-endian pcapng on every host.
 """
 import argparse
 from collections import defaultdict
@@ -41,9 +42,9 @@ class Event:
         return tuple(self.fields[f] for f in ('bus', 'device', 'type', 'endpoint'))
 
 
-def decode(data, timestamp_us):
+def decode(data, timestamp_us, order='<'):
     require(len(data) >= 64, 'short USB pseudoheader')
-    fields = {name: struct.unpack_from('<' + fmt, data, offset)[0]
+    fields = {name: struct.unpack_from(order + fmt, data, offset)[0]
               for name, (fmt, offset) in FIELDS.items()}
     require(fields['event'] in b'SCE', 'unexpected USB event')
     require(fields['type'] <= 3, 'invalid transfer type')
@@ -52,26 +53,27 @@ def decode(data, timestamp_us):
     require(fields['data_length'] >= len(data) - 64, 'invalid USB data length')
     require(fields['type'] == 0 or count == 0, 'ISO descriptors on a non-ISO event')
     require(len(data) == 64 + count * 16 or data[15] == 0, 'payload without data flag')
-    iso = [struct.unpack_from('<iII', data, 64 + i * 16) for i in range(count)]
+    iso = [struct.unpack_from(order + 'iII', data, 64 + i * 16) for i in range(count)]
     return Event(fields, data[40:48] if data[14] == 0 else None,
                  iso, data[64 + count * 16:], timestamp_us)
 
 
 def read_pcap(path):
     data = path.read_bytes()
-    require(len(data) >= 24 and data[:4] == bytes.fromhex('d4c3b2a1'),
-            'expected little-endian microsecond pcap from tcpdump')
-    require(struct.unpack_from('<HH', data, 4) == (2, 4), 'unsupported pcap version')
-    snaplen, linktype = struct.unpack_from('<II', data, 16)
+    require(len(data) >= 24 and data[:4] in (bytes.fromhex('d4c3b2a1'), bytes.fromhex('a1b2c3d4')),
+            'expected microsecond pcap from tcpdump')
+    order = '<' if data[:4] == bytes.fromhex('d4c3b2a1') else '>'
+    require(struct.unpack_from(order + 'HH', data, 4) == (2, 4), 'unsupported pcap version')
+    snaplen, linktype = struct.unpack_from(order + 'II', data, 16)
     require(linktype == 220 and snaplen > 64, 'tcpdump must use USB_LINUX_MMAPPED')
     offset, events = 24, []
     while offset < len(data):
         require(offset + 16 <= len(data), 'truncated pcap record header')
-        sec, usec, captured, original = struct.unpack_from('<IIII', data, offset)
+        sec, usec, captured, original = struct.unpack_from(order + 'IIII', data, offset)
         offset += 16
         require(captured <= original and captured <= snaplen, 'invalid pcap packet lengths')
         require(offset + captured <= len(data), 'truncated pcap packet')
-        events.append(decode(data[offset:offset + captured], sec * 1_000_000 + usec))
+        events.append(decode(data[offset:offset + captured], sec * 1_000_000 + usec, order))
         offset += captured
     return events, snaplen
 

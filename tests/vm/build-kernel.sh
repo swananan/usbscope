@@ -4,7 +4,10 @@ source_dir=$(realpath "${1:?usage: build-kernel.sh LINUX_SOURCE [BUILD_DIR]}")
 build_dir=$(realpath -m "${2:-target/vm-kernel}")
 case "${ARCH:-$(uname -m)}" in
     x86|x86_64) ARCH=x86; image=bzImage; image_path=arch/x86/boot/bzImage ;;
-    arm64|aarch64)
+    arm64|aarch64|arm64_be|aarch64_be)
+        case "${ARCH:-$(uname -m)}" in
+            arm64_be|aarch64_be) ARM64_ENDIAN=big ;;
+        esac
         ARCH=arm64; image=Image; image_path=arch/arm64/boot/Image
         if [ "$(uname -m)" != aarch64 ]; then
             CROSS_COMPILE=${CROSS_COMPILE:-aarch64-linux-gnu-}
@@ -33,6 +36,14 @@ for feature in 64BIT SMP PRINTK BUG ELF_CORE BINFMT_ELF BINFMT_SCRIPT MULTIUSER 
     "$config" --file "$build_dir/.config" --enable "$feature"
 done
 if [ "$ARCH" = arm64 ]; then
+    case "${ARM64_ENDIAN:-little}" in
+        big)
+            "$config" --file "$build_dir/.config" --disable CPU_LITTLE_ENDIAN
+            "$config" --file "$build_dir/.config" --enable CPU_BIG_ENDIAN
+            ;;
+        little) "$config" --file "$build_dir/.config" --disable CPU_BIG_ENDIAN ;;
+        *) printf 'ARM64_ENDIAN must be little or big\n' >&2; exit 1 ;;
+    esac
     for feature in OF ARM_AMBA ARM_GIC ARM_GIC_V3 ARM_ARCH_TIMER PCI_HOST_GENERIC \
         SERIAL_AMBA_PL011 SERIAL_AMBA_PL011_CONSOLE VIRTIO_MMIO \
         ARM64_PTR_AUTH ARM64_PTR_AUTH_KERNEL ARM64_BTI ARM64_BTI_KERNEL; do
@@ -65,6 +76,14 @@ for feature in BPF_SYSCALL BPF_JIT DEBUG_INFO_BTF KPROBES DYNAMIC_FTRACE USB IKC
     fi
 done
 if [ "$ARCH" = arm64 ]; then
+    if [ "${ARM64_ENDIAN:-little}" = big ]; then
+        grep -q '^CONFIG_CPU_BIG_ENDIAN=y$' "$build_dir/.config" || {
+            printf 'CONFIG_CPU_BIG_ENDIAN was not enabled; check this kernel\047s Kconfig dependencies (including BROKEN).\n' >&2
+            exit 1
+        }
+    else
+        grep -q '^# CONFIG_CPU_BIG_ENDIAN is not set$' "$build_dir/.config"
+    fi
     for feature in "ARM64_${ARM64_PAGE_SIZE:-4K}_PAGES" SPARSEMEM_VMEMMAP; do
         grep -q "^CONFIG_${feature}=y$" "$build_dir/.config" || {
             printf 'Required arm64 feature was not enabled: CONFIG_%s\n' "$feature" >&2

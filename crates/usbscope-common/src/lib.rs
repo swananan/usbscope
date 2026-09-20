@@ -111,8 +111,10 @@ unsafe impl aya::Pod for CaptureConfig {}
 #[cfg(feature = "user")]
 unsafe impl aya::Pod for CaptureStats {}
 
-/// Ring transport ABI. Supported targets are little endian. `size` excludes
-/// unused bytes in the reservation; consumers never persist those bytes.
+/// Ring/archive transport ABI: all multibyte scalars are little endian,
+/// independently of the host and BPF target. Maps and C accessor results use
+/// native byte order; convert only when publishing a ring record. `size`
+/// excludes unused reservation bytes, which consumers never persist.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RecordHeader {
@@ -168,7 +170,162 @@ pub struct EventEnd {
     pub reason: u32,
 }
 
+impl RecordHeader {
+    #[inline(always)]
+    pub fn to_le(self) -> Self {
+        Self {
+            version: self.version.to_le(),
+            kind: self.kind.to_le(),
+            size: self.size.to_le(),
+            event_id: self.event_id.to_le(),
+            offset: self.offset.to_le(),
+        }
+    }
+}
+
+impl EventMeta {
+    #[inline(always)]
+    pub fn to_le(mut self) -> Self {
+        self.encode_le();
+        self
+    }
+
+    /// Convert an initialized record at its destination, avoiding a second
+    /// metadata copy on the limited BPF stack. Call exactly once before publish.
+    #[inline(always)]
+    pub fn encode_le(&mut self) {
+        self.urb_id = self.urb_id.to_le();
+        self.timestamp_ns = self.timestamp_ns.to_le();
+        self.bus = self.bus.to_le();
+        self.status = self.status.to_le();
+        self.requested_len = self.requested_len.to_le();
+        self.actual_len = self.actual_len.to_le();
+        self.payload_len = self.payload_len.to_le();
+        self.interval = self.interval.to_le();
+        self.start_frame = self.start_frame.to_le();
+        self.transfer_flags = self.transfer_flags.to_le();
+        self.iso_count = self.iso_count.to_le();
+        self.error_count = self.error_count.to_le();
+        self.vid = self.vid.to_le();
+        self.pid = self.pid.to_le();
+    }
+}
+
+impl IsoDescriptor {
+    #[inline(always)]
+    pub fn to_le(self) -> Self {
+        Self {
+            status: self.status.to_le(),
+            offset: self.offset.to_le(),
+            length: self.length.to_le(),
+            padding: self.padding.to_le(),
+        }
+    }
+}
+
+impl EventEnd {
+    #[inline(always)]
+    pub fn to_le(self) -> Self {
+        Self {
+            copied_bytes: self.copied_bytes.to_le(),
+            descriptors: self.descriptors.to_le(),
+            reason: self.reason.to_le(),
+        }
+    }
+}
+
 const _: () = assert!(core::mem::size_of::<RecordHeader>() == 24);
 const _: () = assert!(core::mem::size_of::<EventMeta>() == 72);
 const _: () = assert!(core::mem::size_of::<IsoDescriptor>() == 16);
 const _: () = assert!(core::mem::size_of::<EventEnd>() == 16);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // These four repr(C) records have no implicit padding. Test the actual
+    // bytes published by BPF against fixed vectors, also on big-endian CPUs.
+    fn bytes<T>(value: &T) -> &[u8] {
+        unsafe { core::slice::from_raw_parts(core::ptr::from_ref(value).cast(), size_of::<T>()) }
+    }
+
+    #[test]
+    fn wire_records_keep_the_v1_little_endian_format() {
+        let header = RecordHeader {
+            version: 1,
+            kind: 3,
+            size: 40,
+            event_id: 0x0102_0304_0506_0708,
+            offset: 0x1122_3344,
+        }
+        .to_le();
+        assert_eq!(
+            bytes(&header),
+            [
+                1, 0, 3, 0, 40, 0, 0, 0, 8, 7, 6, 5, 4, 3, 2, 1, 0x44, 0x33, 0x22, 0x11, 0, 0, 0,
+                0,
+            ]
+        );
+        let descriptor = IsoDescriptor {
+            status: -121,
+            offset: 0x1234_5678,
+            length: 192,
+            padding: 0,
+        }
+        .to_le();
+        assert_eq!(
+            bytes(&descriptor),
+            [
+                0x87, 0xff, 0xff, 0xff, 0x78, 0x56, 0x34, 0x12, 192, 0, 0, 0, 0, 0, 0, 0,
+            ]
+        );
+        let end = EventEnd {
+            copied_bytes: 0x0102_0304_0506_0708,
+            descriptors: 137,
+            reason: 3,
+        }
+        .to_le();
+        assert_eq!(
+            bytes(&end),
+            [8, 7, 6, 5, 4, 3, 2, 1, 137, 0, 0, 0, 3, 0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn metadata_encodes_scalars_and_preserves_usb_setup_bytes() {
+        let meta = EventMeta {
+            urb_id: 0x0102_0304_0506_0708,
+            timestamp_ns: 0x1112_1314_1516_1718,
+            bus: 0x1234,
+            device: 7,
+            endpoint: 0x81,
+            transfer_type: 0,
+            event_type: b'C',
+            setup_present: 1,
+            has_data: 1,
+            status: -121,
+            requested_len: 0x1122_3344,
+            actual_len: 0x1234_5678,
+            payload_len: 0x1122_0001,
+            interval: -2,
+            start_frame: 0x0102_0304,
+            transfer_flags: 0xaabb_ccdd,
+            iso_count: 137,
+            error_count: -5,
+            vid: 0x1234,
+            pid: 0xabcd,
+            setup: [0x80, 6, 0, 1, 0, 0, 18, 0],
+        }
+        .to_le();
+        assert_eq!(
+            bytes(&meta),
+            [
+                8, 7, 6, 5, 4, 3, 2, 1, 0x18, 0x17, 0x16, 0x15, 0x14, 0x13, 0x12, 0x11, 0x34, 0x12,
+                7, 0x81, 0, b'C', 1, 1, 0x87, 0xff, 0xff, 0xff, 0x44, 0x33, 0x22, 0x11, 0x78, 0x56,
+                0x34, 0x12, 1, 0, 0x22, 0x11, 0xfe, 0xff, 0xff, 0xff, 4, 3, 2, 1, 0xdd, 0xcc, 0xbb,
+                0xaa, 137, 0, 0, 0, 0xfb, 0xff, 0xff, 0xff, 0x34, 0x12, 0xcd, 0xab, 0x80, 6, 0, 1,
+                0, 0, 18, 0,
+            ]
+        );
+    }
+}

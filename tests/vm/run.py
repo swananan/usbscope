@@ -14,7 +14,7 @@ from guest import Guest
 
 ROOT = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser()
-parser.add_argument('--arch', choices=['x86_64', 'aarch64'], default=platform.machine())
+parser.add_argument('--arch', choices=['x86_64', 'aarch64', 'aarch64_be'], default=platform.machine())
 parser.add_argument('--kernel', type=Path)
 parser.add_argument('--bpf-object', type=Path)
 parser.add_argument('--binary', type=Path, help='capture CLI to install, for testing an extracted release')
@@ -24,7 +24,7 @@ parser.add_argument('--iso-module', type=Path, help='prebuilt ISO fixture for th
 parser.add_argument('--expected-kernel-release', help='fail if the guest boots a different kernel release')
 parser.add_argument('--expected-page-kib', type=int, choices=[4, 16, 64], help='assert the guest page size')
 parser.add_argument('--guest-root', type=Path,
-                    help='guest userspace from prepare-guest.py; required for cross-architecture runs')
+                    help='guest userspace from prepare-guest.py or prepare-big-endian.py')
 parser.add_argument('--timeout', type=int, default=300)
 parser.add_argument('--log', type=Path, default=ROOT / 'target/vm-e2e.log')
 parser.add_argument('--live', action='store_true', help='validate full payload capture through the CLI')
@@ -38,9 +38,11 @@ parser.add_argument('--compare-tcpdump', action='store_true',
 args = parser.parse_args()
 cross = args.arch != platform.machine()
 if cross and not args.guest_root:
-    parser.error('cross-architecture runs require --guest-root (see prepare-guest.py)')
-kernel_arch = 'arm64' if args.arch == 'aarch64' else 'x86'
-image = 'Image' if args.arch == 'aarch64' else 'bzImage'
+    parser.error('cross-architecture runs require --guest-root (see prepare-guest.py / prepare-big-endian.py)')
+arm64 = args.arch in ('aarch64', 'aarch64_be')
+big_endian = args.arch == 'aarch64_be'
+kernel_arch = 'arm64' if arm64 else 'x86'
+image = 'Image' if arm64 else 'bzImage'
 args.kernel = args.kernel or ROOT / f'target/vm-kernel/arch/{kernel_arch}/boot/{image}'
 if not args.kernel.is_file():
     parser.error(f'build the guest kernel first: {args.kernel}')
@@ -55,18 +57,22 @@ target = f'{args.arch}-unknown-linux-gnu'
 guest_flags = build_flags + (['--target', target] if cross else [])
 guest_build = ROOT / 'target' / target / profile if cross else ROOT / 'target' / profile
 build_environment = dict(os.environ)
-compiler = f'{args.arch}-linux-gnu-gcc' if cross else 'gcc'
+prefix = os.environ.get('CROSS_COMPILE',
+                        'aarch64_be-buildroot-linux-gnu-' if big_endian else f'{args.arch}-linux-gnu-')
+compiler = prefix + 'gcc' if cross else 'gcc'
 module_flags = [f'ARCH={kernel_arch}']
 if cross:
     build_environment.setdefault(f'CARGO_TARGET_{target.upper().replace("-", "_")}_LINKER', compiler)
-    module_flags += [f'CROSS_COMPILE={args.arch}-linux-gnu-']
+    module_flags += [f'CROSS_COMPILE={prefix}']
+build_command = (['scripts/build-userspace.sh', args.arch] + build_flags if cross
+                 else ['cargo', 'build', '--locked'] + guest_flags)
 if not args.probe_binary:
-    subprocess.run(['cargo', 'build', '--locked', '--example', 'probe-smoke'] + guest_flags,
+    subprocess.run(build_command + ['--example', 'probe-smoke'],
                    cwd=ROOT, env=build_environment, check=True)
     args.probe_binary = guest_build / 'examples/probe-smoke'
 if args.live:
     if not args.binary:
-        subprocess.run(['cargo', 'build', '--locked'] + guest_flags, cwd=ROOT, env=build_environment, check=True)
+        subprocess.run(build_command, cwd=ROOT, env=build_environment, check=True)
         args.binary = guest_build / 'usbscope'
     # Offline validation runs on the host, even when capture runs on another CPU.
     if not args.host_binary:
@@ -79,7 +85,8 @@ if args.live:
 with tempfile.TemporaryDirectory(prefix='usbscope-vm-', dir=ROOT / 'target') as temp:
     work = Path(temp)
     fixture = work / 'usb-fixture'
-    subprocess.run([compiler, '-O2', '-Wall', '-Werror', '-o', str(fixture),
+    fixture_flags = ['-static', '-Wl,-z,max-page-size=65536'] if big_endian else []
+    subprocess.run([compiler, '-O2', '-Wall', '-Werror', *fixture_flags, '-o', str(fixture),
                     str(ROOT / 'tests/vm/usb-fixture.c')], check=True)
     if args.audio and not args.iso_module:
         module_dir = work / 'module'
@@ -90,8 +97,10 @@ with tempfile.TemporaryDirectory(prefix='usbscope-vm-', dir=ROOT / 'target') as 
         args.iso_module = module_dir / 'usbscope_iso.ko'
     tree = work / 'root'
     tree.mkdir()
-    for directory in ['bin', 'dev', 'proc', 'sys', 'tmp', 'run', 'out']:
+    for directory in ['bin', 'lib', 'dev', 'proc', 'sys', 'tmp', 'run', 'out']:
         (tree / directory).mkdir()
+    # Some cross SDK loaders search /lib64. Dependencies are installed in /lib.
+    (tree / 'lib64').symlink_to('lib')
 
     guest = Guest(tree, args.guest_root or Path('/'), args.arch)
     guest.binary(guest.find('busybox'), '/bin/busybox')
@@ -115,11 +124,18 @@ with tempfile.TemporaryDirectory(prefix='usbscope-vm-', dir=ROOT / 'target') as 
             raise SystemExit('missing or ambiguous BPF build metadata')
         offset = original.index(marker)
         wrong_arch = bytearray(original)
-        struct.pack_into('<I', wrong_arch, offset + 8, 62 if args.arch == 'aarch64' else 183)
+        struct.pack_into('<I', wrong_arch, offset + 8, 62 if arm64 else 183)
         (tree / 'wrong-arch.bpf.o').write_bytes(wrong_arch)
         wrong_abi = bytearray(original)
         wrong_abi[offset + 12] ^= 8
         (tree / 'wrong-abi.bpf.o').write_bytes(wrong_abi)
+        # A valid empty ELF for the opposite byte order must be rejected before
+        # inspecting capture metadata or loading programs into the kernel.
+        encoding, order = (1, '<') if big_endian else (2, '>')
+        ident = b'\x7fELF' + bytes([2, encoding, 1]) + bytes(9)
+        wrong_endian = struct.pack(order + '16sHHIQQQIHHHHHH', ident, 1, 247, 1,
+                                   0, 0, 0, 0, 64, 0, 0, 64, 0, 0)
+        (tree / 'wrong-endian.bpf.o').write_bytes(wrong_endian)
     if args.audio:
         guest.install(args.iso_module, '/usbscope_iso.ko')
     init = tree / 'init'
@@ -129,7 +145,16 @@ export LC_ALL=C
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
-fail() { echo USBSCOPE_VM_FAIL; reboot -f; }
+fail() {
+    echo USBSCOPE_VM_FAIL
+    if test -n "${probe:-}"; then
+        cat /proc/$probe/stack /proc/$probe/syscall /proc/$probe/status 2>/dev/null
+    fi
+    for log in /tmp/arch.log /tmp/abi.log /tmp/endian.log /out/*.log; do
+        test ! -f "$log" || { echo "$log"; cat "$log"; }
+    done
+    reboot -f
+}
 zcat /proc/config.gz | grep -q '^# CONFIG_USB_MON is not set$' || fail
 test -r /sys/kernel/btf/vmlinux || fail
 sleep 1
@@ -147,7 +172,12 @@ cmp /tmp/probe-expected /tmp/probe-observed || fail
 echo USBSCOPE_VM_PASS
 reboot -f
 ''')
-    checks = ['uname -a']
+    endian = 'big' if big_endian else 'little'
+    checks = ['uname -a', f'test "$(/usb-fixture --endian)" = {endian} || fail']
+    if arm64:
+        config = '^CONFIG_CPU_BIG_ENDIAN=y$' if big_endian else '^# CONFIG_CPU_BIG_ENDIAN is not set$'
+        checks += [f'zcat /proc/config.gz | grep -q {shlex.quote(config)} || fail']
+    checks += [f'echo USBSCOPE_ENDIAN_{endian.upper()}_PASS']
     if args.expected_kernel_release:
         checks += [f'test "$(uname -r)" = {shlex.quote(args.expected_kernel_release)} || fail']
     if args.expected_page_kib:
@@ -159,6 +189,8 @@ if /usbscope --bpf-object /wrong-arch.bpf.o --duration 0.01 2>/tmp/arch.log; the
 grep -q 'BPF object architecture mismatch' /tmp/arch.log || fail
 if /usbscope --bpf-object /wrong-abi.bpf.o --duration 0.01 2>/tmp/abi.log; then fail; fi
 grep -q 'BPF configuration ABI mismatch' /tmp/abi.log || fail
+if /usbscope --bpf-object /wrong-endian.bpf.o --duration 0.01 2>/tmp/endian.log; then fail; fi
+grep -q 'BPF object byte order mismatch' /tmp/endian.log || fail
 echo USBSCOPE_OBJECT_GUARDS_PASS
 /probe-smoke /usbscope.bpf.o &'''))
         init.write_text(init.read_text().replace('echo USBSCOPE_VM_PASS', '''
@@ -250,9 +282,10 @@ wait $reference || fail''', 1)
     disk = work / 'disk.raw'
     with disk.open('wb') as f:
         f.truncate(16 * 1024 * 1024)
-    machine = ['-machine', 'virt,gic-version=3', '-cpu', 'max'] if args.arch == 'aarch64' else []
-    console = 'ttyAMA0' if args.arch == 'aarch64' else 'ttyS0'
-    command = [f'qemu-system-{args.arch}', *machine, '-accel', 'tcg', '-m', '512', '-smp', '2',
+    machine = ['-machine', 'virt,gic-version=3', '-cpu', 'max'] if arm64 else []
+    console = 'ttyAMA0' if arm64 else 'ttyS0'
+    qemu_arch = 'aarch64' if arm64 else 'x86_64'
+    command = [f'qemu-system-{qemu_arch}', *machine, '-accel', 'tcg', '-m', '512', '-smp', '2',
         '-kernel', str(args.kernel.resolve()), '-initrd', str(archive),
         '-append', f'console={console} panic=-1', '-nographic', '-no-reboot',
         '-monitor', 'none', '-nic', 'none', '-device', 'qemu-xhci,id=xhci',

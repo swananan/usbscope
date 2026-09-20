@@ -22,7 +22,7 @@ class Guest:
             candidates = [self.sysroot / directory / name for directory in (
                 'bin', 'usr/bin', 'sbin', 'usr/sbin',
                 f'lib/{self.arch}-linux-gnu', f'usr/lib/{self.arch}-linux-gnu',
-                'lib', 'usr/lib')]
+                'lib', 'usr/lib', 'lib64', 'usr/lib64')]
         for path in candidates:
             if path.is_file() and path.resolve().is_relative_to(self.sysroot):
                 return path
@@ -37,10 +37,11 @@ class Guest:
         source = Path(source)
         with source.open('rb') as stream:
             header = stream.read(20)
-        machine = 183 if self.arch == 'aarch64' else 62
-        if (header[:6] != b'\x7fELF\x02\x01' or len(header) != 20
-                or struct.unpack_from('<H', header, 18)[0] != machine):
-            raise RuntimeError(f'{source} is not a little-endian {self.arch} ELF binary')
+        machine = 183 if self.arch in ('aarch64', 'aarch64_be') else 62
+        order, encoding = ('>', 2) if self.arch == 'aarch64_be' else ('<', 1)
+        if (header[:6] != b'\x7fELF\x02' + bytes([encoding]) or len(header) != 20
+                or struct.unpack_from(order + 'H', header, 18)[0] != machine):
+            raise RuntimeError(f'{source} is not a matching {self.arch} ELF binary')
         self.install(source, destination)
         if source.resolve() in self.installed:
             return

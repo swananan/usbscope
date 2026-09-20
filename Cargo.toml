@@ -14,12 +14,19 @@ resolver = "2"
 anyhow = "1"
 aya = "=0.14.0"
 libc = "0.2"
-flate2 = "1"
 object = { version = "0.39.1", default-features = false, features = ["read_core", "elf"] }
 serde_json = "1"
 clap = { version = "4", features = ["derive"] }
 usbscope-common = { path = "crates/usbscope-common", features = ["user"] }
 usbscope-capture = { path = "crates/usbscope-capture" }
+
+[target.'cfg(target_endian = "little")'.dependencies]
+flate2 = "1"
+
+[target.'cfg(target_endian = "big")'.dependencies]
+# crc32fast's ARM CRC instructions consume native u64 words as little endian.
+# The zlib-rs backend avoids that path when reading /proc/config.gz on BE.
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 
 [profile.release]
 debug = 1

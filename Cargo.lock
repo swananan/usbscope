@@ -486,6 +486,7 @@ name = "usbscope-capture"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "rustix",
  "tempfile",
  "usbscope-common",
 ]

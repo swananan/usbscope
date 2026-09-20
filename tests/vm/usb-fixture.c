@@ -9,6 +9,7 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <stdint.h>
+#include <endian.h>
 static int use_sg;
 
 static void save(const char *name, const void *data, size_t length)
@@ -50,8 +51,9 @@ static unsigned char scsi(int fd, unsigned char *cdb, unsigned cdb_len,
     static uint32_t tag;
     unsigned char cbw[31] = {'U', 'S', 'B', 'C'};
     ++tag;
-    memcpy(cbw + 4, &tag, 4);
-    memcpy(cbw + 8, &length, 4);
+    uint32_t tag_le = htole32(tag), length_le = htole32(length);
+    memcpy(cbw + 4, &tag_le, 4);
+    memcpy(cbw + 8, &length_le, 4);
     cbw[12] = in ? 0x80 : 0;
     cbw[14] = cdb_len;
     memcpy(cbw + 15, cdb, cdb_len);
@@ -59,7 +61,7 @@ static unsigned char scsi(int fd, unsigned char *cdb, unsigned cdb_len,
     if (length) bulk(fd, in ? 0x81 : 2, data, length);
     unsigned char csw[13];
     bulk(fd, 0x81, csw, sizeof(csw));
-    if (memcmp(csw, "USBS", 4) || memcmp(csw + 4, &tag, 4)) {
+    if (memcmp(csw, "USBS", 4) || memcmp(csw + 4, &tag_le, 4)) {
         fprintf(stderr, "invalid command status wrapper\n"); exit(1);
     }
     return csw[12];
@@ -113,6 +115,10 @@ static unsigned attribute(const char *base, const char *name, unsigned radix)
 
 int main(int argc, char **argv)
 {
+    if (argc == 2 && !strcmp(argv[1], "--endian")) {
+        puts(__BYTE_ORDER == __BIG_ENDIAN ? "big" : "little");
+        return 0;
+    }
     if (argc == 2 && !strcmp(argv[1], "--page-kib")) {
         long page = sysconf(_SC_PAGESIZE);
         if (page < 1024) return 1;

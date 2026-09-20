@@ -14,10 +14,15 @@ fn main() {
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../../core-shims/usb.c");
     let bitcode = out.join("usb.bc");
     let clang = env::var_os("BPF_CLANG").unwrap_or_else(|| "clang".into());
+    let target = match env::var("CARGO_CFG_TARGET_ENDIAN").as_deref() {
+        Ok("little") => "bpfel",
+        Ok("big") => "bpfeb",
+        _ => panic!("unsupported BPF byte order"),
+    };
     let status = Command::new(clang)
         .args([
             "-target",
-            "bpfel",
+            target,
             "-mcpu=v3",
             "-O2",
             "-g",

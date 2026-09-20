@@ -8,3 +8,8 @@ license = "MIT OR Apache-2.0"
 anyhow = "1"
 tempfile = "3"
 usbscope-common = { path = "../usbscope-common" }
+
+[target.'cfg(all(target_arch = "aarch64", target_endian = "big"))'.dependencies]
+# rustix's raw syscall backend does not cover arm64 big endian. tempfile uses
+# rustix; select the libc backend for this target without affecting other builds.
+rustix = { version = "1", features = ["use-libc"] }

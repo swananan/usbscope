@@ -21,11 +21,11 @@ use usbscope_common::*;
 static USBSCOPE_BUILD: BpfBuildInfo = BpfBuildInfo {
     magic: BPF_BUILD_MAGIC,
     architecture: if cfg!(bpf_target_arch = "aarch64") {
-        183
+        183u32.to_le()
     } else {
-        62
+        62u32.to_le()
     },
-    config_size: core::mem::size_of::<CaptureConfig>() as u32,
+    config_size: (core::mem::size_of::<CaptureConfig>() as u32).to_le(),
 };
 
 #[map]
@@ -147,6 +147,7 @@ fn header(kind: u16, event_id: u64, size: u32, offset: u64) -> RecordHeader {
         event_id,
         offset,
     }
+    .to_le()
 }
 
 #[inline(always)]
@@ -399,10 +400,10 @@ unsafe fn emit(address: u64, urb_id: u64, event_type: u8, status: i32) {
         return;
     };
     unsafe {
-        begin.as_mut_ptr().write(Begin {
-            header: header(RECORD_BEGIN, event_id, 96, 0),
-            meta,
-        });
+        let record = begin.as_mut_ptr();
+        (&raw mut (*record).header).write(header(RECORD_BEGIN, event_id, 96, 0));
+        (&raw mut (*record).meta).write(meta);
+        (*record).meta.encode_le();
     }
     begin.submit(0);
     let mut copy = CopyContext {
@@ -471,7 +472,8 @@ unsafe fn emit(address: u64, urb_id: u64, event_type: u8, status: i32) {
                 copied_bytes: copy.copied,
                 descriptors,
                 reason: copy.reason,
-            },
+            }
+            .to_le(),
         });
     }
     end.submit(0);
@@ -599,7 +601,7 @@ unsafe extern "C" fn iso_emit(index: u32, context: *mut IsoContext) -> u64 {
     unsafe {
         record.as_mut_ptr().write(IsoRecord {
             header: header(RECORD_ISO, context.copy.event_id, 40, u64::from(index)),
-            descriptor,
+            descriptor: descriptor.to_le(),
         });
     }
     record.submit(0);

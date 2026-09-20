@@ -5,8 +5,17 @@ use usbscope_common::{BPF_BUILD_MAGIC, CaptureConfig};
 pub fn validate_object(bytes: &[u8]) -> Result<()> {
     let object = object::File::parse(bytes).context("parsing BPF object")?;
     ensure!(
-        object.architecture() == object::Architecture::Bpf && object.is_little_endian(),
-        "expected a little-endian eBPF object"
+        object.architecture() == object::Architecture::Bpf,
+        "expected an eBPF object"
+    );
+    ensure!(
+        object.is_little_endian() == cfg!(target_endian = "little"),
+        "BPF object byte order mismatch: rebuild for a {}-endian host",
+        if cfg!(target_endian = "little") {
+            "little"
+        } else {
+            "big"
+        }
     );
     let info = object
         .section_by_name(".usbscope")
