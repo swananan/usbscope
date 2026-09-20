@@ -8,11 +8,15 @@ use usbscope_common::*;
 
 pub mod filter;
 pub mod pcapng;
+pub mod pcapng_read;
 
 pub struct Event {
     pub meta: EventMeta,
     pub iso: Vec<IsoDescriptor>,
     pub payload: SpooledTempFile,
+    /// Native Linux USB pcapng omits these fields; do not invent filter values.
+    pub identity_known: bool,
+    pub requested_known: bool,
 }
 
 struct Pending {
@@ -26,6 +30,7 @@ pub struct ReassemblyStats {
     pub complete: u64,
     pub incomplete: u64,
     pub orphan_records: u64,
+    pub kernel_losses: u64,
 }
 
 #[derive(Default)]
@@ -114,6 +119,17 @@ impl Reassembler {
         let id = u64_at(bytes, 8);
         let offset = u64_at(bytes, 16);
         let body = &bytes[24..size];
+        if kind == RECORD_STATS {
+            ensure!(
+                id == 0 && offset == 0 && body.len() == 64,
+                "invalid kernel counter summary"
+            );
+            for at in [24, 32, 40, 48] {
+                self.stats.kernel_losses =
+                    self.stats.kernel_losses.saturating_add(u64_at(body, at));
+            }
+            return Ok(None);
+        }
         if kind == RECORD_BEGIN {
             ensure!(offset == 0, "metadata offset must be zero");
             ensure!(!self.pending.contains_key(&id), "duplicate event begin");
@@ -129,6 +145,8 @@ impl Reassembler {
                         meta,
                         iso: Vec::new(),
                         payload: SpooledTempFile::new(SPOOL_MEMORY),
+                        identity_known: true,
+                        requested_known: true,
                     },
                     ranges: BTreeMap::new(),
                     copied: 0,
@@ -261,6 +279,31 @@ impl Reassembler {
         self.stats.incomplete += self.pending.len() as u64;
         self.pending.clear();
     }
+    /// A requested offline event/file limit is not evidence of transport loss.
+    pub fn stop_at_limit(&mut self) {
+        self.pending.clear();
+    }
+}
+
+pub fn write_kernel_summary(writer: &mut impl Write, stats: &CaptureStats) -> Result<()> {
+    writer.write_all(&88u32.to_le_bytes())?;
+    writer.write_all(&ABI_VERSION.to_le_bytes())?;
+    writer.write_all(&RECORD_STATS.to_le_bytes())?;
+    writer.write_all(&88u32.to_le_bytes())?;
+    writer.write_all(&[0u8; 16])?;
+    for value in [
+        stats.submitted,
+        stats.completed,
+        stats.submit_errors,
+        stats.ring_losses,
+        stats.read_errors,
+        stats.unsupported_buffers,
+        stats.state_errors,
+        stats.sg_events,
+    ] {
+        writer.write_all(&value.to_le_bytes())?;
+    }
+    Ok(())
 }
 
 pub fn read_raw_header(reader: &mut impl Read) -> Result<()> {

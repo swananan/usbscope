@@ -1,0 +1,62 @@
+name: kernel e2e
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  usbmon-disabled:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        kernel: ['6.6.142', '6.8']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.1
+        with:
+          components: rustfmt, clippy
+      - uses: dtolnay/rust-toolchain@nightly-2025-12-01
+        with:
+          components: rust-src
+      - name: Install build and VM tools
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y clang-18 llvm-18 qemu-system-x86 busybox-static cpio tshark build-essential flex bison bc libelf-dev libssl-dev dwarves
+          cargo +nightly-2025-12-01 install bpf-linker --version 0.9.15 --locked
+      - name: Build Rust and CO-RE object
+        env:
+          BPF_CLANG: clang-18
+        run: |
+          cargo +1.98.1 build --release --locked
+          scripts/build-ebpf.sh
+      - uses: actions/cache@v4
+        id: kernel-cache
+        with:
+          path: |
+            target/linux-source
+            target/vm-kernel
+          key: usbmon-off-${{ runner.os }}-${{ matrix.kernel }}-${{ hashFiles('tests/vm/build-kernel.sh') }}
+      - name: Build kernel with CONFIG_USB_MON disabled
+        if: steps.kernel-cache.outputs.cache-hit != 'true'
+        env:
+          KERNEL_VERSION: ${{ matrix.kernel }}
+        run: |
+          mkdir -p target/linux-source
+          curl --fail --location --retry 3 "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${KERNEL_VERSION}.tar.xz" -o target/linux.tar.xz
+          tar -xf target/linux.tar.xz --strip-components=1 -C target/linux-source
+          JOBS=4 tests/vm/build-kernel.sh target/linux-source
+      - name: Real USB capture, TShark, ISO, filters, SG, and forced loss
+        env:
+          RUSTUP_TOOLCHAIN: 1.98.1
+        run: python3 tests/vm/run.py --live --audio --filters --sg --release
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vm-e2e-${{ matrix.kernel }}
+          path: |
+            target/vm-e2e.log
+            target/vm-artifacts

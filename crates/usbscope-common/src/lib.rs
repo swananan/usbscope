@@ -7,6 +7,8 @@ pub const RECORD_BEGIN: u16 = 1;
 pub const RECORD_DATA: u16 = 2;
 pub const RECORD_ISO: u16 = 3;
 pub const RECORD_END: u16 = 4;
+/// Userspace appends final independent kernel counters to a raw archive.
+pub const RECORD_STATS: u16 = 5;
 pub const COMPLETE: u32 = 0;
 pub const LOSS_RING: u32 = 1;
 pub const LOSS_READ: u32 = 2;

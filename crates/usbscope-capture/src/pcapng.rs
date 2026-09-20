@@ -4,6 +4,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 
 pub struct Writer<W> {
     output: W,
+    bytes: u64,
 }
 
 impl<W: Write> Writer<W> {
@@ -17,7 +18,7 @@ impl<W: Write> Writer<W> {
         )?;
         // LINKTYPE_USB_LINUX_MMAPPED, no snap limit, microsecond timestamps.
         block(&mut output, 1, &[220, 0, 0, 0, 0, 0, 0, 0])?;
-        Ok(Self { output })
+        Ok(Self { output, bytes: 48 })
     }
 
     pub fn write_event(&mut self, event: &mut Event) -> Result<()> {
@@ -94,12 +95,16 @@ impl<W: Write> Writer<W> {
         );
         self.output.write_all(&[0; 3][..padding as usize])?;
         write_u32(&mut self.output, total)?;
+        self.bytes += u64::from(total);
         Ok(())
     }
 
     pub fn flush(&mut self) -> Result<()> {
         self.output.flush()?;
         Ok(())
+    }
+    pub fn bytes_written(&self) -> u64 {
+        self.bytes
     }
 }
 

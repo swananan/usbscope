@@ -1,6 +1,7 @@
 # USB capture filters
 
-Expressions work with live capture and `-r` raw archives. Quote shell operators:
+Expressions work with live capture and `-r` raw archives or USB pcapng files.
+Quote shell operators:
 
 ```sh
 usbscope -i usb2 -w disk.pcapng 'vid 0x1234 and pid 0x5678 and bulk'
@@ -41,6 +42,11 @@ on submissions. No data, an out-of-range byte extraction, or a missing submissio
 makes the corresponding predicate unknown. Unknown does not match, even under
 `not`. For ISO, byte filters exclude padding; `contains` searches within each
 frame and does not stitch separate frames together.
+
+Native USB pcapng does not carry VID/PID, so those fields are unknown when reading
+pcapng. A completion's `requested` length is known only if its submission was
+read earlier. Unknown fields do not become zero, and `not vid 0x1234` does not
+select a packet whose VID was never recorded. Raw archives retain live metadata.
 
 Filters select individual events. A setup or payload predicate can therefore
 select one side of an S/C pair. Use stable device/endpoint/type predicates when

@@ -268,6 +268,11 @@ impl Expr {
     }
 }
 fn value(field: Field, event: &mut Event, latency: Option<u64>) -> Result<Option<i128>> {
+    if matches!(field, Field::Vid | Field::Pid) && !event.identity_known
+        || field == Field::Requested && !event.requested_known
+    {
+        return Ok(None);
+    }
     let m: &EventMeta = &event.meta;
     let v = match field {
         Field::Bus => i128::from(m.bus),
@@ -748,6 +753,8 @@ mod tests {
                                 },
                                 iso: vec![],
                                 payload: SpooledTempFile::new(1024),
+                                identity_known: true,
+                                requested_known: true,
                             };
                             event.payload.write_all(&[payload]).unwrap();
                             if filter.matches(&mut event, Some(2_000_000)).unwrap() {

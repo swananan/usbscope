@@ -11,7 +11,7 @@ because it compiles. Hardware/VM coverage and known limitations are recorded her
 | P2 | ISO/audio metadata, sparse payload, ISO statistics, initial device context | Complete |
 | P3.1 | USB filter language, safe kernel prefilter, archive analysis | Complete |
 | P3.2 | x86_64 SG buffers and randomized-layout VM coverage | Complete |
-| P3.3 | pcapng input, rotation and release checks | Pending |
+| P3.3 | pcapng input, rotation and release checks | Complete |
 
 ## Invariants
 
@@ -122,3 +122,53 @@ visible layout symbols. Other memory models, ISO SG buffers, device-only DMA
 memory, and inaccessible pages fail explicitly as unsupported/read loss. The
 suite exercises 129 contiguous SG entries; separately allocated chained SG tables
 are implemented but not yet exercised by this fixture.
+
+## P3.3 validation
+
+Twenty-three CLI/TShark e2e tests pass against the optimized release binary built
+with pinned Rust 1.98.1. New cases cover pcapng round trips, big-endian sections,
+nanosecond resolution and timestamp offsets, missing identity metadata, truncated
+packets, malformed block lengths, and unsupported packet block types. Input is
+streamed through spooled temporary files; it does not allocate a payload-sized
+buffer. Only LINKTYPE_USB_LINUX_MMAPPED Enhanced Packet Blocks are supported.
+
+Rotation tests exercise size/time boundaries, a complete event larger than the
+rotation target, file-count stopping, and refusal to overwrite existing rotated
+files. Additional checks protect input hard links, BPF objects, and raw archive
+paths from output aliasing. An intentional offline event/file limit discards
+pending fragments without misreporting them as transport loss.
+
+Orderly live shutdown appends independent kernel counter totals to the raw
+archive. A counter-only fixture and the actual VM ring-exhaustion test verify
+that replay still fails strict mode when an entire event disappears from the
+ring. A killed process can lack this final summary; pcapng output itself does
+not preserve the raw archive's counter summary.
+
+The full release suites pass on both Linux 6.6.142 and 6.8 with USB_MON disabled
+and randomized layouts: 24 events (12 S/C pairs), byte-exact large SG transfers,
+137 sparse ISO frames, filters, TShark decoding, archive replay, and forced loss.
+Normal runs have no ring, read, unsupported-buffer, or state errors. The same
+BPF object is used on both kernels. A fresh install of bpf-linker 0.9.15 built
+with the pinned nightly produced the tested object.
+
+Formatting, Clippy with warnings denied, and the filter compiler soundness test
+pass. The repository includes userspace CI, a two-kernel VM workflow, and a
+package script producing the native x86_64 CLI, adjacent BPF object, documentation,
+licenses, and checksums. The hosted workflows have not yet run; the corresponding
+release validation commands have run locally.
+
+## Remaining validation and scope
+
+- Physical controllers and DMA bounce/copyback paths need hardware testing.
+- Live ISO IN, interrupt traffic, separately allocated SG chains, and HCD enqueue
+  failure paths need dedicated kernel fixtures; existing coverage must not be
+  treated as evidence for those cases.
+- aarch64 and other memory models are not validated. SG address translation
+  currently supports x86_64 SPARSEMEM_VMEMMAP with 4 KiB pages only.
+- Post-DMA observation uses kernel-internal hook ordering and readable symbol
+  addresses. Other kernel versions/configurations require regression testing.
+- Device context is an initial snapshot. Hotplug/alternate-setting timelines,
+  UAC feedback decoding, and PCM/WAV export are future work.
+- Full-length capture does not guarantee lossless capture at every data rate.
+  Ring capacity, disk space, temporary storage, and capture-format/reader limits
+  remain resource constraints; errors and incomplete events are reported.

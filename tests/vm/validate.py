@@ -8,6 +8,7 @@ import subprocess
 import sys
 
 root = Path(sys.argv[1])
+binary = sys.argv[sys.argv.index('--binary') + 1] if '--binary' in sys.argv else 'target/debug/usbscope'
 blob = (root / 'live.pcapng').read_bytes()
 packets = []
 offset = 0
@@ -68,7 +69,7 @@ if '--audio' in sys.argv:
         assert all(int(n) == 137 for n in count.split(',')) and len(offsets.split(',')) == 137
     print('ISO_E2E_PASS: 137 audio frames, per-frame status/length, original offsets and zero-filled gaps')
 replay = root / 'replay.pcapng'
-subprocess.run(['target/debug/usbscope', '-r', str(root / 'live.usbraw'), '-w', str(replay), '--fail-on-loss'], check=True)
+subprocess.run([binary, '-r', str(root / 'live.usbraw'), '-w', str(replay), '--fail-on-loss'], check=True)
 assert replay.read_bytes() == blob, 'raw replay changed captured packets'
 parsed = subprocess.run(['tshark', '-r', str(root / 'live.pcapng'), '-T', 'fields',
                          '-e', 'usb.urb_id', '-e', 'usb.urb_type', '-e', 'usb.data_len'],
@@ -77,6 +78,9 @@ assert len(parsed.stdout.splitlines()) == len(packets), 'TShark did not parse al
 assert str(len(expected)) in parsed.stdout, 'TShark lost the large USB payload'
 losses = (root / 'loss.log').read_text()
 assert re.search(r'[1-9][0-9]* ring losses', losses), 'tiny ring did not report loss'
+loss_replay = subprocess.run([binary, '-r', str(root / 'loss.usbraw'),
+    '-w', str(root / 'loss-replay.pcapng'), '--fail-on-loss'], capture_output=True, text=True)
+assert loss_replay.returncode != 0 and re.search(r'archive reports [1-9][0-9]* kernel capture errors', loss_replay.stderr), 'kernel loss counters were not preserved in the archive'
 if '--filters' in sys.argv:
     filtered = subprocess.run(['tshark', '-r', str(root / 'filtered.pcapng'), '-T', 'fields',
         '-e', 'usb.urb_type', '-e', 'usb.urb_len'], capture_output=True, text=True, check=True).stdout.strip().splitlines()

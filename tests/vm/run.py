@@ -17,12 +17,15 @@ parser.add_argument('--artifacts', type=Path, default=ROOT / 'target/vm-artifact
 parser.add_argument('--audio', action='store_true', help='include a 137-frame sparse ISO audio URB')
 parser.add_argument('--filters', action='store_true', help='compare live kernel prefiltering and exact userspace filtering')
 parser.add_argument('--sg', action='store_true', help='use asynchronous usbfs scatter-gather buffers for large URBs')
+parser.add_argument('--release', action='store_true', help='test the optimized userspace binary')
 args = parser.parse_args()
 if (args.audio or args.filters or args.sg) and not args.live:
     parser.error('--audio, --filters, and --sg require --live')
-subprocess.run(['cargo', 'build', '--example', 'probe-smoke'], cwd=ROOT, check=True)
+profile = 'release' if args.release else 'debug'
+build_flags = ['--release'] if args.release else []
+subprocess.run(['cargo', 'build', '--locked', '--example', 'probe-smoke'] + build_flags, cwd=ROOT, check=True)
 if args.live:
-    subprocess.run(['cargo', 'build'], cwd=ROOT, check=True)
+    subprocess.run(['cargo', 'build', '--locked'] + build_flags, cwd=ROOT, check=True)
     args.artifacts.mkdir(parents=True, exist_ok=True)
 subprocess.run(['gcc', '-O2', '-Wall', '-Werror', '-o', str(ROOT / 'target/usb-fixture'),
                 str(ROOT / 'tests/vm/usb-fixture.c')], check=True)
@@ -55,10 +58,10 @@ with tempfile.TemporaryDirectory(prefix='usbscope-vm-', dir=ROOT / 'target') as 
                 install(match.group(1))
 
     binary(shutil.which('busybox'), '/bin/busybox')
-    binary(ROOT / 'target/debug/examples/probe-smoke', '/probe-smoke')
+    binary(ROOT / f'target/{profile}/examples/probe-smoke', '/probe-smoke')
     binary(ROOT / 'target/usb-fixture', '/usb-fixture')
     if args.live:
-        binary(ROOT / 'target/debug/usbscope', '/usbscope')
+        binary(ROOT / f'target/{profile}/usbscope', '/usbscope')
     install(ROOT / 'target/usbscope.bpf.o', '/usbscope.bpf.o')
     if args.audio:
         install(module_dir / 'usbscope_iso.ko', '/usbscope_iso.ko')
@@ -99,7 +102,7 @@ done
 test -f /tmp/live-ready || fail
 /usb-fixture --bulk || fail
 wait $capture || fail
-/usbscope --bpf-object /usbscope.bpf.o -B 4 -w /out/loss.pcapng --ready-file /tmp/loss-ready --duration 4 --fail-on-loss 2>/out/loss.log &
+/usbscope --bpf-object /usbscope.bpf.o -B 4 -w /out/loss.pcapng --raw-output /out/loss.usbraw --ready-file /tmp/loss-ready --duration 4 --fail-on-loss 2>/out/loss.log &
 capture=$!
 for i in $(seq 1 600); do
     test -f /tmp/loss-ready && break
@@ -178,4 +181,5 @@ echo USBSCOPE_VM_PASS'''))
     print('\n'.join(line for line in text.splitlines() if 'OBSERVED' in line or 'USBSCOPE_' in line))
     if args.live:
         subprocess.run(['python3', str(ROOT / 'tests/vm/validate.py'), str(args.artifacts)]
-                       + (['--audio'] if args.audio else []) + (['--filters'] if args.filters else []), check=True)
+                       + ['--binary', str(ROOT / f'target/{profile}/usbscope')]
+                       + (['--audio'] if args.audio else []) + (['--filters'] if args.filters else []), cwd=ROOT, check=True)

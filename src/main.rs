@@ -1,19 +1,20 @@
 mod audio;
 mod devices;
 mod live;
+mod output;
 
 use anyhow::{Context, Result, ensure};
 use clap::Parser;
 use std::{
     collections::HashMap,
     fs::{self, File},
-    io::{self, BufReader, BufWriter, Write},
+    io::{self, BufRead, BufReader, BufWriter, Write},
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     time::Duration,
 };
 use usbscope_capture::filter::Filter;
-use usbscope_capture::{Reassembler, pcapng, read_raw_header, read_record};
+use usbscope_capture::{Event, Reassembler, pcapng_read, read_raw_header, read_record};
 use usbscope_common::RAW_MAGIC;
 
 #[derive(Parser)]
@@ -22,7 +23,7 @@ use usbscope_common::RAW_MAGIC;
     about = "USB capture for Linux kernels without CONFIG_USB_MON"
 )]
 struct Args {
-    /// Read a usbscope event archive instead of capturing live USB traffic.
+    /// Read a usbscope event archive or Linux USB pcapng file.
     #[arg(short = 'r', long = "read", value_name = "FILE")]
     read: Option<PathBuf>,
     /// Write Wireshark-compatible pcapng; '-' writes binary data to stdout.
@@ -64,8 +65,17 @@ struct Args {
     /// Compatibility option: only 0 (full payload) is accepted.
     #[arg(short = 's', long, default_value_t = 0)]
     snaplen: u32,
+    /// Rotate after the current file reaches this many decimal MB; never split an event.
+    #[arg(short = 'C', long)]
+    rotate_size: Option<u64>,
+    /// Rotate on the next event after this many seconds of capture timestamps.
+    #[arg(short = 'G', long)]
+    rotate_seconds: Option<u64>,
+    /// Stop after this many rotated files; existing files are never overwritten.
+    #[arg(short = 'W', long)]
+    max_files: Option<u32>,
     /// Compiled Aya/Rust BPF object.
-    #[arg(long, default_value = "target/usbscope.bpf.o")]
+    #[arg(long, default_value_os_t = default_bpf_object())]
     bpf_object: PathBuf,
     /// Return an error if any event is incomplete or kernel capture reports loss.
     #[arg(long)]
@@ -76,6 +86,18 @@ struct Args {
     /// USB filter expression (quote expressions containing shell operators).
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     filter: Vec<String>,
+}
+
+fn default_bpf_object() -> PathBuf {
+    if let Ok(executable) = std::env::current_exe()
+        && let Some(directory) = executable.parent()
+    {
+        let object = directory.join("usbscope.bpf.o");
+        if object.is_file() {
+            return object;
+        }
+    }
+    PathBuf::from("target/usbscope.bpf.o")
 }
 
 fn main() {
@@ -180,6 +202,23 @@ fn run(args: Args) -> Result<()> {
     if let (Some(read), Some(write)) = (&args.read, &args.write) {
         different_files(read, write)?;
     }
+    for source in [
+        args.read.as_deref(),
+        args.filter_file.as_deref(),
+        args.read.is_none().then_some(args.bpf_object.as_path()),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        for destination in [&args.write, &args.raw_output, &args.device_context]
+            .into_iter()
+            .flatten()
+        {
+            if destination.as_os_str() != "-" {
+                different_files(source, destination)?;
+            }
+        }
+    }
     if let Some(context) = &args.device_context {
         ensure!(
             args.read.is_none(),
@@ -190,20 +229,49 @@ fn run(args: Args) -> Result<()> {
         }
         devices::snapshot(context)?;
     }
-    let mut input = args
+    let input = args
         .read
         .as_ref()
         .map(|path| -> Result<_> {
             let mut input = BufReader::new(File::open(path).context("opening input")?);
-            read_raw_header(&mut input)?;
-            Ok(input)
+            let prefix = input.fill_buf()?;
+            let pcap = prefix.starts_with(&[10, 13, 13, 10]);
+            if !pcap {
+                read_raw_header(&mut input)?;
+            }
+            Ok((input, pcap))
         })
         .transpose()?;
+    ensure!(
+        args.write.is_some()
+            || (args.rotate_size.is_none()
+                && args.rotate_seconds.is_none()
+                && args.max_files.is_none()),
+        "file rotation requires -w"
+    );
+    let rotate_bytes = args
+        .rotate_size
+        .map(|size| {
+            size.checked_mul(1_000_000)
+                .context("rotation size overflow")
+        })
+        .transpose()?;
+    ensure!(
+        args.raw_output.is_none() || input.as_ref().is_none_or(|(_, pcap)| !pcap),
+        "pcapng omits metadata required by raw archives; --raw-output requires live or raw input"
+    );
     let mut writer = args
         .write
         .as_ref()
-        .map(|path| pcapng::Writer::new(output(path)?))
+        .map(|path| {
+            output::CaptureOutput::new(path, rotate_bytes, args.rotate_seconds, args.max_files)
+        })
         .transpose()?;
+    if (args.rotate_size.is_some() || args.rotate_seconds.is_some())
+        && let (Some(base), Some(raw)) = (&args.write, &args.raw_output)
+    {
+        different_files(&output::rotated_path(base, 0), raw)?;
+    }
     let mut raw = args
         .raw_output
         .as_ref()
@@ -216,14 +284,9 @@ fn run(args: Args) -> Result<()> {
     let mut written = 0;
     let mut iso_stats = audio::IsoStats::default();
     let mut submissions = HashMap::<u64, u64>::new();
-    let mut consume = |record: &[u8]| -> Result<bool> {
-        if let Some(raw) = &mut raw {
-            raw.write_all(&(record.len() as u32).to_le_bytes())?;
-            raw.write_all(record)?;
-        }
-        if let Some(mut event) = assembler.push(record)?
-            && args.count.is_none_or(|limit| written < limit)
-        {
+    let mut output_full = false;
+    let mut consume_event = |mut event: Event| -> Result<bool> {
+        if !output_full && args.count.is_none_or(|limit| written < limit) {
             let mut latency = None;
             if needs_latency {
                 let m = &event.meta;
@@ -246,9 +309,22 @@ fn run(args: Args) -> Result<()> {
                 iso_stats.observe(&event);
             }
             if let Some(writer) = &mut writer {
-                writer.write_event(&mut event)?;
+                if !writer.write(&mut event)? {
+                    output_full = true;
+                    return Ok(true);
+                }
             } else {
                 let m = &event.meta;
+                let actual = if m.event_type == b'S' {
+                    "?".to_owned()
+                } else {
+                    m.actual_len.to_string()
+                };
+                let requested = if event.requested_known {
+                    m.requested_len.to_string()
+                } else {
+                    "?".to_owned()
+                };
                 println!(
                     "{}.{:06} {} usb{} {:03} ep={:02x} type={} status={} len={}/{} data={}",
                     m.timestamp_ns / 1_000_000_000,
@@ -259,41 +335,78 @@ fn run(args: Args) -> Result<()> {
                     m.endpoint,
                     m.transfer_type,
                     m.status,
-                    m.actual_len,
-                    m.requested_len,
+                    actual,
+                    requested,
                     m.payload_len
                 );
             }
             written += 1;
         }
-        Ok(args.count.is_some_and(|limit| written >= limit))
+        Ok(output_full || args.count.is_some_and(|limit| written >= limit))
     };
-    let kernel = if let Some(input) = &mut input {
-        while let Some(record) = read_record(input)? {
-            if consume(&record)? {
-                break;
+    let mut pcap_incomplete = 0;
+    let mut offline_stop = false;
+    let kernel = match input {
+        Some((input, true)) => {
+            let mut input = pcapng_read::Reader::new(input);
+            while let Some(event) = input.next_event()? {
+                if consume_event(event)? {
+                    offline_stop = true;
+                    break;
+                }
+            }
+            pcap_incomplete = input.incomplete;
+            None
+        }
+        input => {
+            let mut consume = |record: &[u8]| -> Result<bool> {
+                if let Some(raw) = &mut raw {
+                    raw.write_all(&(record.len() as u32).to_le_bytes())?;
+                    raw.write_all(record)?;
+                }
+                if let Some(event) = assembler.push(record)? {
+                    consume_event(event)
+                } else {
+                    Ok(false)
+                }
+            };
+            if let Some((mut input, _)) = input {
+                while let Some(record) = read_record(&mut input)? {
+                    if consume(&record)? {
+                        offline_stop = true;
+                        break;
+                    }
+                }
+                None
+            } else {
+                Some(live::capture(
+                    live::Options {
+                        object: &args.bpf_object,
+                        ring_kib: args.buffer_size,
+                        bus,
+                        device: args.device,
+                        duration,
+                        ready_file: args.ready_file.as_deref(),
+                        predicates: &predicates,
+                    },
+                    &mut consume,
+                )?)
             }
         }
-        None
-    } else {
-        Some(live::capture(
-            live::Options {
-                object: &args.bpf_object,
-                ring_kib: args.buffer_size,
-                bus,
-                device: args.device,
-                duration,
-                ready_file: args.ready_file.as_deref(),
-                predicates: &predicates,
-            },
-            &mut consume,
-        )?)
     };
-    assembler.finish();
+    if offline_stop {
+        assembler.stop_at_limit();
+    } else {
+        assembler.finish();
+    }
+    assembler.stats.incomplete += pcap_incomplete;
     if let Some(writer) = &mut writer {
         writer.flush()?;
     }
     if let Some(raw) = &mut raw {
+        if let Some(stats) = &kernel {
+            usbscope_capture::write_kernel_summary(raw, stats)?;
+        }
         raw.flush()?;
     }
     let stats = &assembler.stats;
@@ -304,7 +417,16 @@ fn run(args: Args) -> Result<()> {
         "{} events written; {} incomplete events; {} orphan records",
         written, stats.incomplete, stats.orphan_records
     );
-    let mut losses = stats.incomplete + stats.orphan_records;
+    if stats.kernel_losses != 0 {
+        eprintln!(
+            "archive reports {} kernel capture errors",
+            stats.kernel_losses
+        );
+    }
+    let mut losses = stats
+        .incomplete
+        .saturating_add(stats.orphan_records)
+        .saturating_add(stats.kernel_losses);
     if let Some(stats) = kernel {
         eprintln!(
             "kernel: {} submitted, {} completed, {} submit errors; {} ring losses, {} read errors, {} unsupported buffers, {} state errors; {} SG data events; {} URBs still in flight at stop",

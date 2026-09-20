@@ -231,6 +231,132 @@ class CaptureE2E(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr.decode())
             self.assertIn(b'Safe kernel prefilter: []', result.stdout)
 
+    def test_pcapng_roundtrip_and_missing_identity(self):
+        records = [record(1, 1, meta(urb=7, endpoint=0x81, length=9)), end(1),
+                   record(1, 2, meta(urb=7, event='C', endpoint=0x81, length=9,
+                                     actual=3, payload=3, status=0)), record(2, 2, b'abc'), end(2, 3)]
+        source, _ = self.convert(records)
+        target = self.root / 'roundtrip.pcapng'
+        result = subprocess.run([BINARY, '-r', str(source), '-w', str(target), '--fail-on-loss'], capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual(source.read_bytes(), target.read_bytes())
+        for expression, count in [('requested 9 and event complete', 1), ('actual 3', 1),
+                                  ('vid 0x1234', 0), ('not pid 1', 0)]:
+            result = subprocess.run([BINARY, '-r', str(source), '-w', str(target), expression], capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            self.assertEqual(len(packets(target.read_bytes())), count)
+
+    def test_pcapng_big_endian_nanoseconds_and_timestamp_offset(self):
+        def block(kind, body):
+            size = len(body) + 12
+            return struct.pack('>II', kind, size) + body + struct.pack('>I', size)
+        usb = bytearray(67)
+        struct.pack_into('>Q', usb, 0, 77)
+        usb[8:12] = bytes([ord('C'), 3, 0x81, 5])
+        struct.pack_into('>H', usb, 12, 2)
+        usb[14] = ord('-')
+        struct.pack_into('>iII', usb, 28, 0, 3, 3)
+        usb[64:] = b'abc'
+        section = block(0x0a0d0d0a, struct.pack('>IHHq', 0x1a2b3c4d, 1, 0, -1))
+        options = struct.pack('>HHB3x', 9, 1, 9) + struct.pack('>HHq', 14, 8, 2) + bytes(4)
+        interface = block(1, struct.pack('>HHI', 220, 0, 0) + options)
+        packet = block(6, struct.pack('>IIIII', 0, 0, 1_234_567_000, len(usb), len(usb)) + usb + bytes(1))
+        source = self.root / 'big-endian.pcapng'
+        source.write_bytes(section + interface + packet)
+        target = self.root / 'converted.pcapng'
+        result = subprocess.run([BINARY, '-r', str(source), '-w', str(target), '--fail-on-loss'], capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        parsed = packets(target.read_bytes())
+        self.assertEqual(parsed[0][64:], b'abc')
+        self.assertEqual(struct.unpack_from('<Q', parsed[0], 0)[0], 77)
+        self.assertEqual(self.tshark(target, 'frame.time_epoch'), ['3.234567000'])
+
+    def test_pcapng_malformed_lengths_and_snap_truncation(self):
+        source, _ = self.convert([record(1, 1, meta(length=4, payload=4)), record(2, 1, b'abcd'), end(1, 4)])
+        original = source.read_bytes()
+        target = self.root / 'validated.pcapng'
+        # EPB starts after the 28-byte SHB and 20-byte IDB.
+        for at, value in [(48 + 20, 0xffffffff), (len(original) - 4, 0)]:
+            corrupt = bytearray(original)
+            struct.pack_into('<I', corrupt, at, value)
+            source.write_bytes(corrupt)
+            result = subprocess.run([BINARY, '-r', str(source), '-w', str(target)], capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+        truncated = bytearray(original)
+        struct.pack_into('<I', truncated, 48 + 24, 999)
+        source.write_bytes(truncated)
+        result = subprocess.run([BINARY, '-r', str(source), '-w', str(target), '--fail-on-loss'], capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b'1 incomplete events', result.stderr)
+        self.assertEqual(packets(target.read_bytes()), [])
+        frame = packets(original)[0]
+        body = struct.pack('<I', len(frame)) + frame
+        body += bytes((-len(body)) % 4)
+        size = len(body) + 12
+        source.write_bytes(original[:48] + struct.pack('<II', 3, size) + body + struct.pack('<I', size))
+        result = subprocess.run([BINARY, '-r', str(source), '-w', str(target)], capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b'Enhanced Packet Blocks', result.stderr)
+
+    def test_rotation_keeps_large_events_whole_and_stops_at_file_count(self):
+        payload = b'z' * (2 * 1024 * 1024 + 3)
+        records = []
+        for event_id in [1, 2, 3]:
+            records.append(record(1, event_id, meta(urb=event_id, length=len(payload), payload=len(payload))))
+            for offset in range(0, len(payload), 16384):
+                records.append(record(2, event_id, payload[offset:offset + 16384], offset))
+            records.append(end(event_id, len(payload)))
+        target, result = self.convert(records, options=['-C', '1', '-W', '2'])
+        self.assertIn(b'2 events written', result.stderr)
+        self.assertFalse(target.exists())
+        files = sorted(self.root.glob('output.pcapng.*'))
+        self.assertEqual(len(files), 2)
+        for path in files:
+            self.assertEqual(packets(path.read_bytes())[0][64:], payload)
+            self.assertEqual(len(self.tshark(path, 'usb.data_len')), 1)
+
+    def test_time_rotation_and_existing_files_are_protected(self):
+        records = []
+        for i, timestamp in enumerate([1_000_000_000, 1_500_000_000, 3_000_000_000], 1):
+            records += [record(1, i, meta(urb=i, timestamp=timestamp)), end(i)]
+        self.convert(records, options=['-G', '1'])
+        files = sorted(self.root.glob('output.pcapng.*'))
+        self.assertEqual([len(packets(p.read_bytes())) for p in files], [2, 1])
+        before = files[0].read_bytes()
+        self.convert(records, options=['-G', '1'], success=False)
+        self.assertEqual(files[0].read_bytes(), before)
+
+    def test_archive_preserves_loss_when_entire_events_are_missing(self):
+        summary = record(5, 0, struct.pack('<8Q', 3, 3, 0, 2, 1, 0, 0, 0))
+        target, result = self.convert([summary], success=False)
+        self.assertIn(b'archive reports 3 kernel capture errors', result.stderr)
+        self.assertEqual(packets(target.read_bytes()), [])
+
+    def test_count_limit_does_not_report_intentionally_unread_fragments_as_loss(self):
+        records = [record(1, 1, meta(urb=1, length=4, payload=4)),
+                   record(1, 2, meta(urb=2)), end(2), record(2, 1, b'data'), end(1, 4)]
+        target, result = self.convert(records, options=['-c', '1'])
+        self.assertIn(b'0 incomplete events', result.stderr)
+        self.assertEqual([struct.unpack_from('<Q', p)[0] for p in packets(target.read_bytes())], [2])
+
+    def test_output_aliases_cannot_overwrite_input_or_bpf_object(self):
+        source = self.root / 'source.usbraw'
+        original = b'USBSCP\0\x01' + record(1, 1, meta()) + end(1)
+        source.write_bytes(original)
+        alias = self.root / 'alias.pcapng'
+        alias.hardlink_to(source)
+        result = subprocess.run([BINARY, '-r', str(source), '-w', str(alias)], capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(source.read_bytes(), original)
+        obj = self.root / 'test.bpf.o'
+        obj.write_bytes(b'object sentinel')
+        result = subprocess.run([BINARY, '--bpf-object', str(obj), '-w', str(obj)], capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(obj.read_bytes(), b'object sentinel')
+        self.convert([record(1, 1, meta()), end(1)], success=False,
+            options=['-C', '1', '--raw-output', str(self.root / 'output.pcapng.000000')])
+        self.assertTrue((self.root / 'output.pcapng.000000').read_bytes().startswith(bytes.fromhex('0a0d0d0a')))
+
 
 if __name__ == '__main__':
     unittest.main(argv=['e2e.py'] + REST, verbosity=2)
