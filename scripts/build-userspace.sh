@@ -12,9 +12,11 @@ esac
 case "$capture_arch" in
     x86_64)
         export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="${CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER:-${CROSS_COMPILE:-x86_64-linux-gnu-}gcc}"
+        export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="${CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS:-} -C target-feature=+crt-static"
         ;;
     aarch64)
         export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="${CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER:-${CROSS_COMPILE:-aarch64-linux-gnu-}gcc}"
+        export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS="${CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS:-} -C target-feature=+crt-static -C link-arg=-Wl,-z,max-page-size=65536"
         ;;
     aarch64_be)
         export CARGO_TARGET_AARCH64_BE_UNKNOWN_LINUX_GNU_LINKER="${CARGO_TARGET_AARCH64_BE_UNKNOWN_LINUX_GNU_LINKER:-${CROSS_COMPILE:-aarch64_be-buildroot-linux-gnu-}gcc}"
