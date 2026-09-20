@@ -60,12 +60,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.98.1
         with:
           targets: ${{ matrix.arch != 'aarch64_be' && format('{0}-unknown-linux-gnu', matrix.arch) || '' }}
-      - uses: dtolnay/rust-toolchain@nightly-2025-12-01
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly-2025-12-01
           components: rust-src
-      - uses: dtolnay/rust-toolchain@nightly-2026-09-18
+      - uses: dtolnay/rust-toolchain@master
         if: matrix.arch == 'aarch64_be'
         with:
+          toolchain: nightly-2026-09-18
           components: rust-src
       - uses: Swatinem/rust-cache@v2
         with:
