@@ -175,7 +175,7 @@ reboot -f
     endian = 'big' if big_endian else 'little'
     checks = ['uname -a', f'test "$(/usb-fixture --endian)" = {endian} || fail']
     if arm64:
-        config = '^CONFIG_CPU_BIG_ENDIAN=y$' if big_endian else '^# CONFIG_CPU_BIG_ENDIAN is not set$'
+        config = '^CONFIG_CPU_BIG_ENDIAN=y$' if big_endian else '^CONFIG_CPU_LITTLE_ENDIAN=y$'
         checks += [f'zcat /proc/config.gz | grep -q {shlex.quote(config)} || fail']
     checks += [f'echo USBSCOPE_ENDIAN_{endian.upper()}_PASS']
     if args.expected_kernel_release:

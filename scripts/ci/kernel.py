@@ -80,7 +80,7 @@ def verify(bundle, expected):
     if expected['arch'] in ('aarch64', 'aarch64_be'):
         required += ['CONFIG_ARM64=y', f'CONFIG_ARM64_{expected["pages"]}_PAGES=y', 'CONFIG_ARM64_VA_BITS=48']
         required += ['CONFIG_CPU_BIG_ENDIAN=y' if expected['arch'] == 'aarch64_be'
-                     else '# CONFIG_CPU_BIG_ENDIAN is not set']
+                     else 'CONFIG_CPU_LITTLE_ENDIAN=y']
     else:
         required += ['CONFIG_X86_64=y']
     for setting in required:

@@ -58,7 +58,7 @@ class KernelCacheTests(unittest.TestCase):
         (self.bundle / 'config').write_text(
             '# CONFIG_USB_MON is not set\nCONFIG_DEBUG_INFO_BTF=y\nCONFIG_IKCONFIG_PROC=y\n'
             'CONFIG_ARM64=y\nCONFIG_ARM64_64K_PAGES=y\nCONFIG_ARM64_VA_BITS=48\n'
-            '# CONFIG_CPU_BIG_ENDIAN is not set\n')
+            '# CONFIG_CPU_BIG_ENDIAN is not set\nCONFIG_CPU_LITTLE_ENDIAN=y\n')
         self.metadata = dict(self.expected, kernel_release='6.6.142', files={
             name: kernel.sha256(self.bundle / name) for name in ('kernel', 'config', 'usbscope_iso.ko')})
         self.write_metadata(self.metadata)
@@ -68,6 +68,26 @@ class KernelCacheTests(unittest.TestCase):
 
     def test_correct_cache(self):
         self.assertEqual(kernel.verify(self.bundle, self.expected), self.metadata)
+
+    def test_little_endian_cache_without_big_endian_option(self):
+        # Linux 6.18+ hides CPU_BIG_ENDIAN behind BROKEN, omitting even its "not set" line.
+        config = self.bundle / 'config'
+        config.write_text(config.read_text().replace('# CONFIG_CPU_BIG_ENDIAN is not set\n', ''))
+        metadata = copy.deepcopy(self.metadata)
+        metadata['files']['config'] = kernel.sha256(config)
+        self.write_metadata(metadata)
+        self.assertEqual(kernel.verify(self.bundle, self.expected), metadata)
+
+    def test_little_endian_cache_rejects_big_endian_kernel(self):
+        config = self.bundle / 'config'
+        config.write_text(config.read_text().replace(
+            '# CONFIG_CPU_BIG_ENDIAN is not set\nCONFIG_CPU_LITTLE_ENDIAN=y',
+            'CONFIG_CPU_BIG_ENDIAN=y'))
+        metadata = copy.deepcopy(self.metadata)
+        metadata['files']['config'] = kernel.sha256(config)
+        self.write_metadata(metadata)
+        with self.assertRaisesRegex(ValueError, 'CPU_LITTLE_ENDIAN'):
+            kernel.verify(self.bundle, self.expected)
 
     def test_wrong_identity(self):
         for key, value in [('arch', 'x86_64'), ('pages', '4K'), ('usbmon', 'y'),
@@ -88,8 +108,9 @@ class KernelCacheTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'CPU_BIG_ENDIAN'):
             kernel.verify(self.bundle, expected)
         config = self.bundle / 'config'
-        config.write_text(config.read_text().replace('# CONFIG_CPU_BIG_ENDIAN is not set',
-                                                    'CONFIG_CPU_BIG_ENDIAN=y'))
+        config.write_text(config.read_text().replace(
+            '# CONFIG_CPU_BIG_ENDIAN is not set\nCONFIG_CPU_LITTLE_ENDIAN=y',
+            'CONFIG_CPU_BIG_ENDIAN=y'))
         metadata = copy.deepcopy(metadata)
         metadata['files']['config'] = kernel.sha256(config)
         self.write_metadata(metadata)

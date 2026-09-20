@@ -82,7 +82,11 @@ if [ "$ARCH" = arm64 ]; then
             exit 1
         }
     else
-        grep -q '^# CONFIG_CPU_BIG_ENDIAN is not set$' "$build_dir/.config"
+        # Kconfig omits CPU_BIG_ENDIAN entirely when its dependencies are unmet.
+        grep -q '^CONFIG_CPU_LITTLE_ENDIAN=y$' "$build_dir/.config" || {
+            printf 'CONFIG_CPU_LITTLE_ENDIAN was not enabled.\n' >&2
+            exit 1
+        }
     fi
     for feature in "ARM64_${ARM64_PAGE_SIZE:-4K}_PAGES" SPARSEMEM_VMEMMAP; do
         grep -q "^CONFIG_${feature}=y$" "$build_dir/.config" || {
