@@ -14,6 +14,25 @@ pub const LOSS_RING: u32 = 1;
 pub const LOSS_READ: u32 = 2;
 pub const LOSS_UNSUPPORTED_BUFFER: u32 = 3;
 pub const MAX_KERNEL_PREDICATES: u32 = 64;
+pub const BPF_BUILD_MAGIC: [u8; 8] = *b"USBSBPF1";
+
+#[repr(C)]
+pub struct BpfBuildInfo {
+    pub magic: [u8; 8],
+    pub architecture: u32,
+    pub config_size: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SgMemory {
+    /// x86_64 kernel variables, read by BPF after relocation of struct page.
+    pub vmemmap_symbol: u64,
+    pub page_offset_symbol: u64,
+    /// Zero disables SG. arm64 additionally needs CONFIG_ARM64_VA_BITS.
+    pub page_shift: u32,
+    pub va_bits: u32,
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
@@ -61,9 +80,7 @@ pub struct CaptureConfig {
     pub epoch_offset_ns: u64,
     pub giveback_start: u64,
     pub giveback_end: u64,
-    /// Addresses of x86_64 direct-map layout variables; zero disables SG.
-    pub vmemmap_symbol: u64,
-    pub page_offset_symbol: u64,
+    pub memory: SgMemory,
     /// Zero selects all buses; u32::MAX selects all device addresses.
     pub bus: u32,
     pub device: u32,

@@ -26,6 +26,11 @@ fn main() {
             "-Wall",
             "-Werror",
         ])
+        .arg(if arch == "aarch64" {
+            "-DUSBSCOPE_ARM64=1"
+        } else {
+            "-DUSBSCOPE_X86_64=1"
+        })
         .arg(&source)
         .arg("-o")
         .arg(&bitcode)

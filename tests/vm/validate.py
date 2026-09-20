@@ -71,6 +71,10 @@ if '--audio' in sys.argv:
 replay = root / 'replay.pcapng'
 subprocess.run([binary, '-r', str(root / 'live.usbraw'), '-w', str(replay), '--fail-on-loss'], check=True)
 assert replay.read_bytes() == blob, 'raw replay changed captured packets'
+assert (root / 'guest-replay.pcapng').read_bytes() == blob, 'guest raw replay changed captured packets'
+selected = root / 'host-selected.pcapng'
+subprocess.run([binary, '-r', str(root / 'live.pcapng'), '-w', str(selected), 'bulk and in'], check=True)
+assert selected.read_bytes() == (root / 'guest-selected.pcapng').read_bytes(), 'host and guest pcapng filtering differ'
 parsed = subprocess.run(['tshark', '-r', str(root / 'live.pcapng'), '-T', 'fields',
                          '-e', 'usb.urb_id', '-e', 'usb.urb_type', '-e', 'usb.data_len'],
                         capture_output=True, text=True, check=True)

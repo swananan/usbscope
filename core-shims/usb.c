@@ -153,11 +153,14 @@ long core_sg_start(u64 address, u64 *start)
     return 0;
 }
 
-/* x86_64 SPARSEMEM_VMEMMAP, 4 KiB base pages. Both layout bases come from
- * runtime kernel variables, so KASLR and five-level paging need no constants.
- * This is CPU virtual memory translation, never a DMA-address translation. */
-long core_sg_segment(u64 address, u64 vmemmap_symbol, u64 page_offset_symbol,
-                     struct sg_segment *out)
+struct sg_memory { u64 vmemmap_symbol, page_offset_symbol; u32 page_shift, va_bits; };
+_Static_assert(sizeof(struct sg_memory) == 24, "Rust/C SG configuration ABI mismatch");
+
+/* SPARSEMEM_VMEMMAP CPU virtual addresses, never DMA-address translation.
+ * x86_64 obtains the mapping bases from runtime kernel variables.
+ * arm64 derives PAGE_OFFSET and VMEMMAP_START from the running configuration
+ * and CO-RE sizeof(struct page), as in arch/arm64/include/asm/memory.h. */
+long core_sg_segment(u64 address, const struct sg_memory *memory, struct sg_segment *out)
 {
     struct scatterlist *sg = (void *)address;
     u64 link = 0, vmemmap = 0, direct = 0;
@@ -166,15 +169,38 @@ long core_sg_segment(u64 address, u64 vmemmap_symbol, u64 page_offset_symbol,
     READ(offset, sg->offset);
     READ(out->length, sg->length);
     if ((link & 1) || !link) return -1;
-    if (probe_read(&vmemmap, 8, (void *)vmemmap_symbol) < 0 ||
-        probe_read(&direct, 8, (void *)page_offset_symbol) < 0) return -1;
     u64 page = link & ~3ULL;
     u32 page_size = __builtin_preserve_type_info(*(struct page *)0, 1);
+    u32 shift = memory->page_shift;
+    u64 max_pages;
+#if defined(USBSCOPE_ARM64)
+    u32 bits = memory->va_bits;
+    if ((shift != 12 && shift != 14 && shift != 16) || bits < 36 || bits > 52) return -1;
+    if (!page_size || page_size > 4096) return -1;
+    u32 order = 0;
+    /* Kernel STRUCT_PAGE_MAX_SHIFT is ceil(log2(sizeof(struct page))). */
+    for (; order < 12; order++) {
+        if ((1U << order) >= page_size) break;
+    }
+    if (order >= shift) return -1;
+    vmemmap = 0ULL - (1ULL << (bits - shift + order));
+    direct = 0ULL - (1ULL << bits);
+    u32 min_bits = bits > 48 ? 48 : bits;
+    u64 end = 0ULL - (1ULL << (min_bits - 1));
+    max_pages = (end - direct) >> shift;
+#elif defined(USBSCOPE_X86_64)
+    if (shift != 12 || !memory->vmemmap_symbol || !memory->page_offset_symbol) return -1;
+    if (probe_read(&vmemmap, 8, (void *)memory->vmemmap_symbol) < 0 ||
+        probe_read(&direct, 8, (void *)memory->page_offset_symbol) < 0) return -1;
+    max_pages = 1ULL << 40; /* x86 physical addresses are <=52 bits */
+#else
+#error Unsupported SG architecture
+#endif
     if (!vmemmap || !direct || !page_size || page < vmemmap ||
         (page - vmemmap) % page_size) return -1;
     u64 pfn = (page - vmemmap) / page_size;
-    if (pfn >= (1ULL << 40)) return -1; /* x86 physical addresses are <=52 bits */
-    out->source = direct + (pfn << 12) + offset;
+    if (pfn >= max_pages) return -1;
+    out->source = direct + (pfn << shift) + offset;
     out->next = 0;
     out->padding = 0;
     if (!(link & 2)) {

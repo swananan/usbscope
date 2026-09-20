@@ -2,7 +2,7 @@
 """Compare independently captured tcpdump/usbmon and usbscope fixture traffic.
 
 This intentionally does not use the product's readers or filter implementation.
-Only the little-endian LINKTYPE 220 formats produced by this x86_64 VM are read.
+Only the little-endian LINKTYPE 220 formats produced by these Linux VMs are read.
 """
 import argparse
 from collections import defaultdict

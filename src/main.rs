@@ -1,5 +1,14 @@
+#[cfg(not(all(
+    target_os = "linux",
+    target_endian = "little",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+)))]
+compile_error!("usbscope currently supports little-endian Linux x86_64 and aarch64");
+
 mod audio;
+mod bpf;
 mod devices;
+mod kernel_config;
 mod live;
 mod output;
 

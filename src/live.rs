@@ -11,7 +11,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
 };
-use usbscope_common::{CaptureConfig, CaptureStats, KernelPredicate};
+use usbscope_common::{CaptureConfig, CaptureStats, KernelPredicate, SgMemory};
 
 static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
@@ -103,6 +103,8 @@ pub fn capture(
     options: Options<'_>,
     mut record: impl FnMut(&[u8]) -> Result<bool>,
 ) -> Result<CaptureStats> {
+    let object = fs::read(options.object).context("reading USB BPF object")?;
+    crate::bpf::validate_object(&object)?;
     let ring_bytes = options
         .ring_kib
         .checked_mul(1024)
@@ -113,10 +115,22 @@ pub fn capture(
         "-B must specify a power-of-two number of KiB, at least one page"
     );
     let (giveback_start, giveback_end, vmemmap_symbol, page_offset_symbol) = kernel_addresses()?;
+    let memory = if cfg!(target_arch = "aarch64") {
+        crate::kernel_config::arm64_runtime_memory(page)
+    } else if page == 4096 && vmemmap_symbol != 0 && page_offset_symbol != 0 {
+        SgMemory {
+            vmemmap_symbol,
+            page_offset_symbol,
+            page_shift: 12,
+            va_bits: 0,
+        }
+    } else {
+        SgMemory::default()
+    };
     let btf = Btf::from_sys_fs().context("kernel BTF is required")?;
     let mut bpf = EbpfLoader::new()
         .map_max_entries("EVENTS", ring_bytes)
-        .load_file(options.object)
+        .load(&object)
         .context("loading USB BPF object")?;
     let mut config =
         Array::<_, CaptureConfig>::try_from(bpf.take_map("CONFIG").context("missing CONFIG map")?)?;
@@ -163,8 +177,7 @@ pub fn capture(
         epoch_offset_ns: epoch_offset()?,
         giveback_start,
         giveback_end,
-        vmemmap_symbol,
-        page_offset_symbol,
+        memory,
         bus: options.bus,
         device: options.device.map_or(u32::MAX, u32::from),
         enabled: 1,

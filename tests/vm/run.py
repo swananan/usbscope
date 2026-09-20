@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import platform
 import shutil
+import struct
 import subprocess
 import tempfile
 
@@ -15,6 +16,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--arch', choices=['x86_64', 'aarch64'], default=platform.machine())
 parser.add_argument('--kernel', type=Path)
 parser.add_argument('--bpf-object', type=Path)
+parser.add_argument('--binary', type=Path, help='capture CLI to install, for testing an extracted release')
 parser.add_argument('--guest-root', type=Path,
                     help='guest userspace from prepare-guest.py; required for cross-architecture runs')
 parser.add_argument('--timeout', type=int, default=300)
@@ -33,8 +35,7 @@ if cross and not args.guest_root:
     parser.error('cross-architecture runs require --guest-root (see prepare-guest.py)')
 kernel_arch = 'arm64' if args.arch == 'aarch64' else 'x86'
 image = 'Image' if args.arch == 'aarch64' else 'bzImage'
-kernel_dir = 'vm-kernel-aarch64' if args.arch == 'aarch64' else 'vm-kernel'
-args.kernel = args.kernel or ROOT / f'target/{kernel_dir}/arch/{kernel_arch}/boot/{image}'
+args.kernel = args.kernel or ROOT / f'target/vm-kernel/arch/{kernel_arch}/boot/{image}'
 if not args.kernel.is_file():
     parser.error(f'build the guest kernel first: {args.kernel}')
 args.bpf_object = args.bpf_object or ROOT / f'target/{args.arch}/usbscope.bpf.o'
@@ -60,13 +61,11 @@ if args.live:
     # Offline validation runs on the host, even when capture runs on another CPU.
     subprocess.run(['cargo', 'build', '--locked'] + build_flags, cwd=ROOT, check=True)
     args.artifacts.mkdir(parents=True, exist_ok=True)
-fixture = ROOT / f'target/{args.arch}/usb-fixture'
-fixture.parent.mkdir(parents=True, exist_ok=True)
-subprocess.run([compiler, '-O2', '-Wall', '-Werror', '-o', str(fixture),
-                str(ROOT / 'tests/vm/usb-fixture.c')], check=True)
-
 with tempfile.TemporaryDirectory(prefix='usbscope-vm-', dir=ROOT / 'target') as temp:
     work = Path(temp)
+    fixture = work / 'usb-fixture'
+    subprocess.run([compiler, '-O2', '-Wall', '-Werror', '-o', str(fixture),
+                    str(ROOT / 'tests/vm/usb-fixture.c')], check=True)
     if args.audio:
         module_dir = work / 'module'
         shutil.copytree(ROOT / 'tests/vm/kernel', module_dir)
@@ -83,7 +82,7 @@ with tempfile.TemporaryDirectory(prefix='usbscope-vm-', dir=ROOT / 'target') as 
     guest.binary(guest_build / 'examples/probe-smoke', '/probe-smoke')
     guest.binary(fixture, '/usb-fixture')
     if args.live:
-        guest.binary(guest_build / 'usbscope', '/usbscope')
+        guest.binary(args.binary or guest_build / 'usbscope', '/usbscope')
     if args.compare_tcpdump:
         guest.binary(guest.find('tcpdump'), '/tcpdump')
         (tree / 'etc').mkdir()
@@ -91,6 +90,20 @@ with tempfile.TemporaryDirectory(prefix='usbscope-vm-', dir=ROOT / 'target') as 
         (tree / 'etc/group').write_text('root:x:0:\ncapture:x:65534:\n')
         (tree / 'etc/nsswitch.conf').write_text('passwd: files\ngroup: files\n')
     guest.install(args.bpf_object, '/usbscope.bpf.o')
+    if args.live:
+        # Mutate only the build metadata of a real object. Both checks must fail
+        # before attachment, even though the program's ELF/BTF remain valid.
+        original = args.bpf_object.read_bytes()
+        marker = b'USBSBPF1'
+        if original.count(marker) != 1:
+            raise SystemExit('missing or ambiguous BPF build metadata')
+        offset = original.index(marker)
+        wrong_arch = bytearray(original)
+        struct.pack_into('<I', wrong_arch, offset + 8, 62 if args.arch == 'aarch64' else 183)
+        (tree / 'wrong-arch.bpf.o').write_bytes(wrong_arch)
+        wrong_abi = bytearray(original)
+        wrong_abi[offset + 12] ^= 8
+        (tree / 'wrong-abi.bpf.o').write_bytes(wrong_abi)
     if args.audio:
         guest.install(module_dir / 'usbscope_iso.ko', '/usbscope_iso.ko')
     init = tree / 'init'
@@ -119,6 +132,13 @@ echo USBSCOPE_VM_PASS
 reboot -f
 ''')
     if args.live:
+        init.write_text(init.read_text().replace('/probe-smoke /usbscope.bpf.o &', '''
+if /usbscope --bpf-object /wrong-arch.bpf.o --duration 0.01 2>/tmp/arch.log; then fail; fi
+grep -q 'BPF object architecture mismatch' /tmp/arch.log || fail
+if /usbscope --bpf-object /wrong-abi.bpf.o --duration 0.01 2>/tmp/abi.log; then fail; fi
+grep -q 'BPF configuration ABI mismatch' /tmp/abi.log || fail
+echo USBSCOPE_OBJECT_GUARDS_PASS
+/probe-smoke /usbscope.bpf.o &'''))
         init.write_text(init.read_text().replace('echo USBSCOPE_VM_PASS', '''
 mount -t 9p -o trans=virtio,version=9p2000.L artifacts /out || fail
 /usbscope --bpf-object /usbscope.bpf.o -w /out/live.pcapng --raw-output /out/live.usbraw --device-context /out/devices.json --iso-stats --ready-file /tmp/live-ready --duration 6 --fail-on-loss &
@@ -131,6 +151,9 @@ done
 test -f /tmp/live-ready || fail
 /usb-fixture --bulk || fail
 wait $capture || fail
+/usbscope -r /out/live.usbraw -w /out/guest-replay.pcapng --fail-on-loss || fail
+cmp /out/live.pcapng /out/guest-replay.pcapng || fail
+/usbscope -r /out/live.pcapng -w /out/guest-selected.pcapng 'bulk and in' || fail
 ring_kib=$(/usb-fixture --page-kib) || fail
 /usbscope --bpf-object /usbscope.bpf.o -B "$ring_kib" -w /out/loss.pcapng --raw-output /out/loss.usbraw --ready-file /tmp/loss-ready --duration 4 --fail-on-loss 2>/out/loss.log &
 capture=$!

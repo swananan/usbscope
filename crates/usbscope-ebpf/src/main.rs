@@ -15,6 +15,19 @@ use core::{
 };
 use usbscope_common::*;
 
+#[used]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = ".usbscope")]
+static USBSCOPE_BUILD: BpfBuildInfo = BpfBuildInfo {
+    magic: BPF_BUILD_MAGIC,
+    architecture: if cfg!(bpf_target_arch = "aarch64") {
+        183
+    } else {
+        62
+    },
+    config_size: core::mem::size_of::<CaptureConfig>() as u32,
+};
+
 #[map]
 static EVENTS: RingBuf = RingBuf::with_byte_size(16 * 1024 * 1024, 0);
 #[map]
@@ -90,8 +103,8 @@ struct SgSegment {
 #[repr(C)]
 struct SgContext {
     next: u64,
-    vmemmap: u64,
-    page_offset: u64,
+    // CONFIG is an array map: its value stays valid throughout bpf_loop.
+    memory: *const SgMemory,
     copy: *mut CopyContext,
     remaining: u32,
     segment_left: u32,
@@ -104,7 +117,7 @@ unsafe extern "C" {
     fn core_completion_status(address: u64, status: *mut i32) -> i64;
     fn core_read_iso(address: u64, index: u32, submission: u32, out: *mut IsoDescriptor) -> i64;
     fn core_sg_start(address: u64, start: *mut u64) -> i64;
-    fn core_sg_segment(address: u64, vmemmap: u64, page_offset: u64, out: *mut SgSegment) -> i64;
+    fn core_sg_segment(address: u64, memory: *const SgMemory, out: *mut SgSegment) -> i64;
 }
 
 #[inline(always)]
@@ -471,15 +484,14 @@ unsafe fn copy_sg(address: u64, segments: u32, copy: &mut CopyContext) {
         copy.reason = LOSS_READ;
         return;
     };
-    if config.vmemmap_symbol == 0 || config.page_offset_symbol == 0 {
+    if config.memory.page_shift == 0 {
         copy.reason = LOSS_UNSUPPORTED_BUFFER;
         count(5);
         return;
     }
     let mut context = SgContext {
         next: 0,
-        vmemmap: config.vmemmap_symbol,
-        page_offset: config.page_offset_symbol,
+        memory: &config.memory,
         remaining: copy.total,
         copy,
         segment_left: 0,
@@ -524,14 +536,7 @@ unsafe extern "C" fn sg_copy_segment(_: u32, context: *mut SgContext) -> u64 {
         let mut segment = core::mem::MaybeUninit::<SgSegment>::uninit();
         if context.next == 0
             || context.segments_left == 0
-            || unsafe {
-                core_sg_segment(
-                    context.next,
-                    context.vmemmap,
-                    context.page_offset,
-                    segment.as_mut_ptr(),
-                )
-            } < 0
+            || unsafe { core_sg_segment(context.next, context.memory, segment.as_mut_ptr()) } < 0
         {
             copy.reason = LOSS_READ;
             count(4);
