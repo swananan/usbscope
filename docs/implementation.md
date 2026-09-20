@@ -6,6 +6,8 @@ because it compiles. Hardware/VM coverage and known limitations are recorded her
 For the current design, see the [architecture and CO-RE guide](architecture.md).
 Build commands and test setup are in the [development guide](development.md);
 operational requirements and limits are in the [usage guide](usage.md).
+Stage notes describe validation at the time of implementation. Later hosted
+results are recorded in [P7](#p7-github-actions-validation).
 
 | Stage | Scope | Status |
 | --- | --- | --- |
@@ -19,10 +21,12 @@ operational requirements and limits are in the [usage guide](usage.md).
 | P3.4 | Independent tcpdump capture comparison and regular VM matrix | Complete |
 | P4.1 | Native/cross arm64 builds and rootless VM capture e2e | Complete |
 | P4.2 | arm64 SG, 4 KiB/64 KiB pages, architecture/ABI guards | Complete |
-| P4.3 | Architecture-specific releases, twelve-job CI matrix, platform documentation | Complete locally; hosted CI pending |
+| P4.3 | Architecture-specific releases, twelve-job CI matrix, platform documentation | Complete; later hosted validation in P7 |
 | P5.1 | ARM SG compatibility with the upstream 6.9+ memory layout | Complete |
-| P5.2 | Pinned PR/full kernel CI, shared build artifacts, compact verified caches | Complete locally; hosted CI pending |
+| P5.2 | Pinned PR/full kernel CI, shared build artifacts, compact verified caches | Complete; later hosted validation in P7 |
 | P5.3 | Verifier compatibility on 7.2 and final cross-kernel object regression | Complete |
+| P6 | arm64 big endian, cross-endian replay, three-target packages and CI | Complete |
+| P7 | GitHub repository, hosted CI fixes and validation | Userspace and 16-job matrix passed; full run linked below |
 
 ## Invariants
 
@@ -167,7 +171,7 @@ with the pinned nightly produced the tested object.
 Formatting, Clippy with warnings denied, and the filter compiler soundness test
 pass. The repository includes userspace CI, a two-kernel VM workflow, and a
 package script producing the native x86_64 CLI, adjacent BPF object, documentation,
-licenses, and checksums. The hosted workflows have not yet run; the corresponding
+licenses, and checksums. At this stage the hosted workflows had not yet run; the corresponding
 release validation commands have run locally.
 
 ## P3.4 validation
@@ -199,7 +203,7 @@ changes were needed to pass the differential tests.
 CI now has two kernels times two USB_MON configurations. Both enabled jobs run
 the SG/audio comparison and a second contiguous-buffer comparison, preserving
 captures, collector versions, comparison JSON, and guest logs. These commands
-have run locally; the hosted workflow has not yet run. See the
+have run locally; at this stage the hosted workflow had not yet run. See the
 [comparison guide](usbmon-comparison.md) for reproducible commands, normalization
 rules, and the scope of the baseline.
 
@@ -232,8 +236,8 @@ guest page and pauses its reader, removing the previous 4 KiB assumption.
 The package script builds x86_64/aarch64 Linux GNU archives with a matching BPF
 object; cross builds do not overwrite the native development object. The VM
 workflow exercises these release artifacts in twelve configurations, including
-both USB_MON states and separate contiguous-buffer comparisons. The hosted
-workflow has not yet run. Reproduction instructions are in [platforms.md](platforms.md).
+both USB_MON states and separate contiguous-buffer comparisons. At this stage the hosted
+workflow had not yet run. Reproduction instructions are in [platforms.md](platforms.md).
 
 ## Remaining validation and scope
 
@@ -292,7 +296,7 @@ bpf-linker, and make replaced by failing stubs. ARM 6.18.52/64 KiB passed both
 SG/audio and contiguous tcpdump comparison through the same CI wrapper.
 Linux 6.12.110 passed on ARM/4 KiB with USB_MON=n and x86_64 with USB_MON=y;
 the latter also passed both tcpdump comparison suites. Rust tests, Clippy, format
-checks, and all 23 CLI/TShark e2e cases passed. The hosted workflow remains unrun.
+checks, and all 23 CLI/TShark e2e cases passed. At this stage the hosted workflow had not yet run.
 
 ## P5.3: current stable verifier and final regression
 
@@ -368,5 +372,37 @@ separate x86_64, aarch64, and aarch64_be release builds. Big-endian kernels cove
 6.18.52 and 7.2.6 require `BROKEN` for arm64 big endian and remain LE-only.
 The manifest records that restriction; cache verification and guest assertions
 check byte order. Nine CI contract tests, Actionlint, ShellCheck, formatting,
-and native Clippy pass. Hosted Actions remain unrun; additional matrix cells
+and native Clippy pass. At this stage hosted Actions had not yet run; additional matrix cells
 and physical hardware remain distinct from the local evidence above.
+
+## P7: GitHub Actions validation
+
+The repository is hosted at [swananan/usbscope](https://github.com/swananan/usbscope).
+The first hosted runs exposed two CI setup assumptions:
+
+- Dated Rust nightlies are toolchain inputs, not Git refs of
+  `dtolnay/rust-toolchain`. The workflow now uses the action's `master` ref with
+  explicit pinned `toolchain` inputs.
+- The pinned newer arm64 kernels hide `CPU_BIG_ENDIAN` behind `BROKEN`, so
+  `.config` omits even its disabled line. Kernel builds, cache verification, and
+  guest assertions now check the selected `CONFIG_CPU_LITTLE_ENDIAN=y` option.
+  Regression tests accept the omitted option while still rejecting a big-endian
+  kernel in a little-endian cache.
+
+The second fix passed all 11 CI contract tests, Actionlint, ShellCheck, and a
+local ARM 6.18.52/64 KiB/USB_MON=y run with SG/audio and contiguous tcpdump
+comparisons, including all ten and eight corruption checks.
+
+On 2026-09-20, commit
+[`4150a4a`](https://github.com/swananan/usbscope/commit/4150a4a0551e8b96356f253879aef82dd78a7a31)
+passed [userspace checks](https://github.com/swananan/usbscope/actions/runs/35508748463)
+and the complete [16-configuration PR/main matrix](https://github.com/swananan/usbscope/actions/runs/35508748487).
+All three architecture builds and the aggregate check passed. The big-endian
+build also ran its Rust tests and all 23 CLI/TShark cases on the big-endian binary.
+Each architecture's packaged CLI/BPF object was reused across its kernel jobs.
+
+The [52-configuration full run](https://github.com/swananan/usbscope/actions/runs/35509184246)
+tests the same commit across all pinned kernels. Its job conclusions, logs, and
+capture artifacts provide the per-configuration results; see the
+[CI validation record](ci.md#validation-status) for the run index. These QEMU
+results are separate from the physical-controller coverage still listed above.

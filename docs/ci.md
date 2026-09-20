@@ -128,11 +128,26 @@ records with it.
 
 ## Validation status
 
-Hosted workflow status and logs are available in
+The first successful hosted PR/main validation on 2026-09-20 uses commit
+[`4150a4a`](https://github.com/swananan/usbscope/commit/4150a4a0551e8b96356f253879aef82dd78a7a31).
+Userspace checks and all 16 PR/main kernel configurations passed. The full run
+targets the same commit; its linked job results record the outcome of each of
+the 52 configurations.
+
+| Run | Coverage | Result |
+| --- | --- | --- |
+| [Userspace checks](https://github.com/swananan/usbscope/actions/runs/35508748463) | Formatting, Clippy, Rust tests, 23 CLI/TShark cases, 11 CI contract tests, workflow/shell lint | Passed |
+| [PR/main matrix](https://github.com/swananan/usbscope/actions/runs/35508748487) | 16 kernel configurations and three architecture builds, including big-endian Rust/CLI tests | Passed |
+| [Full matrix](https://github.com/swananan/usbscope/actions/runs/35509184246) | 52 kernel configurations across all pinned versions | [Live result](https://github.com/swananan/usbscope/actions/runs/35509184246) |
+
+Subsequent workflow results are available in
 [GitHub Actions](https://github.com/swananan/usbscope/actions/workflows/vm-e2e.yml).
-Local runs verify the workflow's scripts and QEMU test path; they do not establish
-that every one of the 52 hosted combinations has passed. Before the big-endian
-extension, one BPF object per little-endian architecture passed these ten local configurations:
+Use each run's profile, commit, and individual job conclusions as evidence;
+starting a run does not establish that its entire matrix passed.
+
+The earlier local runs below verify the scripts and QEMU path separately.
+Before the big-endian extension, one BPF object per little-endian architecture
+passed these ten local configurations:
 
 | Kernel | x86_64 | arm64 |
 | --- | --- | --- |
