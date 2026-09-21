@@ -239,8 +239,8 @@ impl Reassembler {
                 ensure!(body.len() == 16 && offset == 0, "invalid event end");
                 let pending = self.pending.remove(&id).unwrap();
                 let m = &pending.event.meta;
+                let mut span = 0u64;
                 if m.transfer_type == 0 {
-                    let mut span = 0u64;
                     for descriptor in &pending.event.iso {
                         let end = u64::from(descriptor.offset) + u64::from(descriptor.length);
                         ensure!(
@@ -251,13 +251,18 @@ impl Reassembler {
                             span = span.max(end);
                         }
                     }
-                    if m.has_data != 0 && pending.event.iso.len() as u64 == u64::from(m.iso_count) {
-                        ensure!(
-                            span == u64::from(m.payload_len),
-                            "ISO descriptors disagree with payload span"
-                        );
-                    }
                 }
+                let data_phase = (m.event_type == b'S' && m.endpoint & 0x80 == 0)
+                    || (m.event_type == b'C' && m.endpoint & 0x80 != 0);
+                let expected_payload = if !data_phase {
+                    0
+                } else if m.transfer_type == 0 {
+                    span
+                } else if m.event_type == b'S' {
+                    u64::from(m.requested_len)
+                } else {
+                    u64::from(m.actual_len)
+                };
                 let covers =
                     |start: u64, len: u64| {
                         len == 0
@@ -289,6 +294,8 @@ impl Reassembler {
                     || u64_at(body, 0) != pending.copied
                     || u32_at(body, 8) != m.iso_count
                     || pending.event.iso.len() as u64 != u64::from(m.iso_count)
+                    || u64::from(m.payload_len) != expected_payload
+                    || (m.has_data != 0) != (expected_payload != 0)
                     || !data_complete
                 {
                     self.stats.incomplete += 1;

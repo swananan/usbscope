@@ -45,6 +45,9 @@ and [usage limits](usage.md#current-usage-limits) describe completeness and form
 ISO frames may reuse overlapping buffer regions. Reassembly verifies that
 repeated bytes agree and counts every frame's copied bytes; non-ISO overlapping
 transport fragments and conflicting ISO copies are rejected.
+Raw replay also checks the declared payload span against the URB's data phase,
+requested/actual length, and ISO descriptors. Missing bytes cannot become a
+complete event simply by reducing the archive's payload length or presence flag.
 
 Ring records, raw archives, build metadata, and generated pcapng use explicit
 little-endian encoding on every host. Kernel reads, map configuration, predicates,

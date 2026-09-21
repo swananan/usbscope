@@ -158,6 +158,31 @@ class CaptureE2E(unittest.TestCase):
         self.assertIn(b'1 incomplete events', run.stderr)
         self.assertEqual(packets(target.read_bytes()), [])
 
+    def test_raw_metadata_cannot_hide_missing_or_unexpected_payload(self):
+        for transfer in range(4):
+            for event, endpoint in [('S', 2), ('C', 0x81)]:
+                for declared in [0, 3]:
+                    with self.subTest(transfer=transfer, event=event, declared=declared):
+                        count = int(transfer == 0)
+                        records = [record(1, 1, meta(event=event, endpoint=endpoint,
+                            transfer=transfer, length=4, actual=4 if event == 'C' else 0,
+                            payload=declared, descriptors=count))]
+                        if count:
+                            records.append(record(3, 1, struct.pack('<iIII', 0, 0, 4, 0)))
+                        if declared:
+                            records.append(record(2, 1, b'abc'))
+                        records.append(end(1, declared, count))
+                        target, run = self.convert(records, success=False)
+                        self.assertIn(b'1 incomplete events', run.stderr)
+                        self.assertEqual(packets(target.read_bytes()), [])
+        for event, endpoint in [('S', 0x81), ('C', 2), ('E', 2)]:
+            with self.subTest(event=event, endpoint=endpoint):
+                target, run = self.convert([record(1, 1, meta(event=event, endpoint=endpoint,
+                    length=4, actual=4, payload=4)), record(2, 1, b'data'), end(1, 4)],
+                    success=False)
+                self.assertIn(b'1 incomplete events', run.stderr)
+                self.assertEqual(packets(target.read_bytes()), [])
+
     def test_missing_end_and_orphan_are_reported(self):
         _, run = self.convert([record(1, 1, meta()), end(2)], success=False)
         self.assertIn(b'1 incomplete events; 1 orphan records', run.stderr)
