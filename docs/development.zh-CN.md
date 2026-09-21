@@ -72,6 +72,11 @@ VM 测试运行器需要对应来宾架构的 QEMU、BusyBox 和用户态库，�
 root hub 拒绝入队和 ISO 取消。`edges.pcapng`、`edges.usbraw`、驱动结果文件及
 `edges.log` 用于核对状态码、配对、载荷、逐字节回放，以及 USB 错误不会造成抓包丢失的误报。
 
+没有指定 `--iso-module` 时，运行器从 `--kernel` 所在的内核构建树编译夹具，并先同步更新
+启动镜像和模块构建。编译器或配置变化可能重新生成 vmlinux 的 BTF，旧启动镜像不能与新模块
+混用。指定 `--iso-module` 时直接使用给定的镜像/模块组合，不重新构建；CI 在启动前会验证
+整个 bundle 的身份信息和校验和。
+
 要进行独立的实时抓包对比，可额外构建启用 usbmon 的内核，并使用 `--compare-tcpdump`
 运行测试。[对比指南（英文）](usbmon-comparison.md)说明了同步方式、字段和载荷匹配规则，
 以及如何明确处理 usbmon/libpcap 的截断行为，也记录了对比检查器的负向测试。

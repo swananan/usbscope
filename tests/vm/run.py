@@ -92,7 +92,11 @@ with tempfile.TemporaryDirectory(prefix='usbscope-vm-', dir=ROOT / 'target') as 
         module_dir = work / 'module'
         shutil.copytree(ROOT / 'tests/vm/kernel', module_dir)
         kernel_build = args.kernel.resolve().parents[3]
-        subprocess.run(['make', '-s', '-C', str(kernel_build), '-j4', *module_flags, 'modules'], check=True)
+        # `make modules` can rebuild vmlinux (including its BTF) after a compiler
+        # or configuration change. Refresh the boot image in the same build, or
+        # the new module's split BTF may refer to a different kernel's type IDs.
+        subprocess.run(['make', '-s', '-C', str(kernel_build), '-j4', *module_flags,
+                        image, 'modules'], check=True)
         subprocess.run(['make', '-s', '-C', str(kernel_build), *module_flags, f'M={module_dir}', 'modules'], check=True)
         args.iso_module = module_dir / 'usbscope_iso.ko'
     tree = work / 'root'

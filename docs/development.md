@@ -81,6 +81,13 @@ control responses, device STALL, root-hub enqueue rejection, and ISO cancellatio
 `edges.pcapng`, `edges.usbraw`, the driver result files, and `edges.log` verify
 statuses, pairing, payloads, exact replay, and zero capture loss despite USB errors.
 
+Without `--iso-module`, the runner builds the fixture from the kernel build tree
+containing `--kernel`. It refreshes both the boot image and module build first:
+changing the compiler or configuration can regenerate vmlinux's BTF, so an old
+boot image must not be paired with a new module. With `--iso-module`, the supplied
+image/module pair is used without rebuilding; CI verifies that bundle's identity
+and checksums before boot.
+
 For independent live capture comparison, build an additional kernel with usbmon
 enabled and run with `--compare-tcpdump`. The [comparison guide](usbmon-comparison.md)
 explains synchronization, field/payload matching, and explicit handling of
