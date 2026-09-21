@@ -419,6 +419,47 @@ class CaptureE2E(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(b'Enhanced Packet Blocks', result.stderr)
 
+    def test_pcapng_missing_expected_payload_is_reported_as_loss(self):
+        for transfer in [0, 1, 2, 3]:
+            for event, endpoint in [('S', 2), ('C', 0x82)]:
+                with self.subTest(transfer=transfer, event=event):
+                    count = int(transfer == 0)
+                    records = [record(1, 1, meta(event=event, endpoint=endpoint,
+                        transfer=transfer, length=4, actual=4 if event == 'C' else 0,
+                        payload=4, descriptors=count, status=0 if event == 'C' else -115))]
+                    if count:
+                        records.append(record(3, 1, struct.pack('<iIII', 0, 0, 4, 0)))
+                    records += [record(2, 1, b'data'), end(1, 4, count)]
+                    source, _ = self.convert(records)
+                    packet = bytearray(packets(source.read_bytes())[0][:-4])
+                    # usbmon reports inaccessible DMA/NULL buffers via D/Z,
+                    # and reduces both captured and original packet lengths.
+                    for flag in b'DZ':
+                        packet[15] = flag
+                        struct.pack_into('<I', packet, 36, count * 16)
+                        source.write_bytes(pcapng([(0, 1000, packet)]))
+                        target = self.root / 'missing-payload.pcapng'
+                        for strict in [False, True]:
+                            result = subprocess.run([BINARY, '-r', str(source), '-w', str(target)]
+                                + (['--fail-on-loss'] if strict else []), capture_output=True)
+                            self.assertEqual(result.returncode == 0, not strict, result.stderr.decode())
+                            self.assertIn(b'1 incomplete events', result.stderr)
+                            self.assertEqual(packets(target.read_bytes()), [])
+
+    def test_pcapng_legitimate_data_absence_is_not_loss(self):
+        records = []
+        for i, (event, endpoint, length, actual) in enumerate(
+                [('S', 0x81, 4, 0), ('C', 2, 4, 4), ('C', 0x81, 4, 0), ('E', 2, 4, 0)], 1):
+            records += [record(1, i, meta(urb=i, event=event, endpoint=endpoint,
+                                         length=length, actual=actual)), end(i)]
+        source, _ = self.convert(records)
+        target = self.root / 'no-data.pcapng'
+        result = subprocess.run([BINARY, '-r', str(source), '-w', str(target),
+                                 '--fail-on-loss'], capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual(len(packets(target.read_bytes())), 4)
+        self.assertIn(b'0 incomplete events', result.stderr)
+
     def test_rotation_keeps_large_events_whole_and_stops_at_file_count(self):
         payload = b'z' * (2 * 1024 * 1024 + 3)
         records = []

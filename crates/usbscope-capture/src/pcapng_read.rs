@@ -296,7 +296,21 @@ impl<R: Read> Reader<R> {
                     payload.flush()?;
                     skip(&mut self.input, u64::from(size - 32 - caplen))?;
                     self.footer(size)?;
-                    if meta.transfer_type != 0 && meta.has_data != 0 && meta.payload_len != wire_len
+                    // usbmon can omit an inaccessible buffer (flags D/Z) and
+                    // reduce both packet lengths. That is still capture loss
+                    // when this phase was meant to carry nonempty data.
+                    let data_phase = (meta.event_type == b'S' && meta.endpoint & 0x80 == 0)
+                        || (meta.event_type == b'C' && meta.endpoint & 0x80 != 0);
+                    let expected_data = data_phase
+                        && if meta.transfer_type == 0 {
+                            iso.iter().any(|d| d.length != 0)
+                        } else {
+                            wire_len != 0
+                        };
+                    if (expected_data && meta.has_data == 0)
+                        || (meta.transfer_type != 0
+                            && meta.has_data != 0
+                            && meta.payload_len != wire_len)
                     {
                         self.incomplete += 1;
                         continue;

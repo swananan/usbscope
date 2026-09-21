@@ -106,7 +106,8 @@ sudo usbscope -i usb1 -w audio.pcapng -G 60 --iso-stats
 `-r` recognizes raw archives and pcapng Enhanced Packet Blocks with
 `LINKTYPE_USB_LINUX_MMAPPED` (220). Classic pcap and other packet/link types are
 not supported. Reading streams large payloads through temporary storage. Input
-snap truncation is reported as incomplete data. Standard USB pcapng lacks VID/PID;
+snap truncation and payloads omitted because the collector could not read their
+buffers are reported as incomplete data. Standard USB pcapng lacks VID/PID;
 completion request lengths and latency also need an observed submission. Missing
 fields remain unknown to filters. ISO completions can be read without their
 submissions, including sparse frames and empty tail frames; actual transferred
