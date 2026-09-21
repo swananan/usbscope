@@ -737,6 +737,7 @@ mod tests {
                     for status in [0, -32] {
                         for payload in *b"ab" {
                             let mut event = Event {
+                                source_id: 0,
                                 meta: EventMeta {
                                     bus,
                                     device: 5,

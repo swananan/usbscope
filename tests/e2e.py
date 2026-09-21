@@ -58,6 +58,20 @@ def packets(blob):
     return result
 
 
+def pcapng(events, interfaces=1):
+    """Independent EPB producer: (interface index, timestamp in us, USB bytes)."""
+    def block(kind, body):
+        size = len(body) + 12
+        return struct.pack('<II', kind, size) + body + struct.pack('<I', size)
+    result = block(0x0a0d0d0a, struct.pack('<IHHq', 0x1a2b3c4d, 1, 0, -1))
+    result += block(1, struct.pack('<HHI', 220, 0, 0)) * interfaces
+    for interface, timestamp, packet in events:
+        body = struct.pack('<IIIII', interface, timestamp >> 32, timestamp & 0xffffffff,
+                           len(packet), len(packet)) + packet
+        result += block(6, body + bytes(-len(body) % 4))
+    return result
+
+
 class CaptureE2E(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='usbscope-e2e-')
@@ -316,6 +330,67 @@ class CaptureE2E(unittest.TestCase):
         result = subprocess.run([BINARY, '-r', str(source)], capture_output=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(b'ISO descriptor outside URB buffer', result.stderr)
+
+    def test_pcapng_pairing_and_rewrite_keep_interfaces_separate(self):
+        records = []
+        for i, (event, length, timestamp) in enumerate(
+                [('S', 8, 1_000_000), ('S', 16, 2_000_000),
+                 ('C', 8, 3_000_000), ('C', 16, 6_000_000)], 1):
+            records += [record(1, i, meta(urb=7, event=event, endpoint=0x81,
+                length=length, timestamp=timestamp, status=-115 if event == 'S' else 0)), end(i)]
+        source, _ = self.convert(records)
+        usb = packets(source.read_bytes())
+        source.write_bytes(pcapng([(0, 1000, usb[0]), (1, 2000, usb[1]),
+                                   (0, 3000, usb[2]), (1, 6000, usb[3])], interfaces=2))
+        rewritten = self.root / 'interfaces-rewritten.pcapng'
+        result = subprocess.run([BINARY, '-r', str(source), '-w', str(rewritten),
+                                 '--fail-on-loss'], capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        selected = self.root / 'interface-selected.pcapng'
+        for path in [source, rewritten]:
+            for expression, timestamp in [('requested 8', '0.003000000'),
+                                           ('requested 16', '0.006000000'),
+                                           ('latency 2ms', '0.003000000'),
+                                           ('latency 4ms', '0.006000000')]:
+                with self.subTest(path=path.name, expression=expression):
+                    result = subprocess.run([BINARY, '-r', str(path), '-w', str(selected),
+                        '--fail-on-loss', f'event complete and {expression}'], capture_output=True)
+                    self.assertEqual(result.returncode, 0, result.stderr.decode())
+                    self.assertEqual(self.tshark(selected, 'frame.time_epoch'), [timestamp])
+
+    def test_pcapng_latency_never_pairs_across_sections(self):
+        source, _ = self.convert([record(1, 1, meta(urb=7, timestamp=1_000_000)), end(1),
+            record(1, 2, meta(urb=7, event='C', timestamp=4_000_000, status=0)), end(2)])
+        usb = packets(source.read_bytes())
+        source.write_bytes(pcapng([(0, 1000, usb[0])]) + pcapng([(0, 4000, usb[1])]))
+        rewritten = self.root / 'sections-rewritten.pcapng'
+        result = subprocess.run([BINARY, '-r', str(source), '-w', str(rewritten)], capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        for path in [source, rewritten]:
+            with self.subTest(path=path.name):
+                selected = self.root / 'sections-selected.pcapng'
+                result = subprocess.run([BINARY, '-r', str(path), '-w', str(selected),
+                    '--fail-on-loss', 'latency > 0'], capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr.decode())
+                self.assertEqual(packets(selected.read_bytes()), [])
+
+    def test_pcapng_iso_stats_keep_capture_sources_separate(self):
+        records = []
+        for i, length in enumerate([2, 4], 1):
+            records += [record(1, i, meta(urb=7, event='C', transfer=0, length=8,
+                actual=length, descriptors=1, status=0)),
+                record(3, i, struct.pack('<iIII', 0, 0, length, 0)), end(i, descriptors=1)]
+        source, _ = self.convert(records)
+        usb = packets(source.read_bytes())
+        source.write_bytes(pcapng([(0, 1000, usb[0]), (1, 9000, usb[1])], interfaces=2))
+        result = subprocess.run([BINARY, '-r', str(source), '--iso-stats'], capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        lines = [line for line in result.stderr.splitlines() if line.startswith(b'ISO usb')]
+        self.assertEqual(len(lines), 2, result.stderr.decode())
+        for source_id, length in enumerate([2, 4]):
+            self.assertIn(f'source={source_id}'.encode(), lines[source_id])
+            self.assertIn(f'1 completed URBs, 1 frames, {length} bytes'.encode(), lines[source_id])
+            self.assertIn(b'max observed completion gap=0 us', lines[source_id])
 
     def test_pcapng_malformed_lengths_and_snap_truncation(self):
         source, _ = self.convert([record(1, 1, meta(length=4, payload=4)), record(2, 1, b'abcd'), end(1, 4)])

@@ -15,7 +15,7 @@ struct Endpoint {
 
 /// URB completion timing is a software observation, not USB wire timing.
 #[derive(Default)]
-pub struct IsoStats(BTreeMap<(u16, u8, u8), Endpoint>);
+pub struct IsoStats(BTreeMap<(u64, u16, u8, u8), Endpoint>);
 
 impl IsoStats {
     pub fn observe(&mut self, event: &Event) {
@@ -23,7 +23,10 @@ impl IsoStats {
         if m.transfer_type != 0 || m.event_type != b'C' {
             return;
         }
-        let endpoint = self.0.entry((m.bus, m.device, m.endpoint)).or_default();
+        let endpoint = self
+            .0
+            .entry((event.source_id, m.bus, m.device, m.endpoint))
+            .or_default();
         endpoint.urbs += 1;
         endpoint.urb_errors += u64::from(m.status != 0);
         for descriptor in &event.iso {
@@ -41,9 +44,9 @@ impl IsoStats {
     }
 
     pub fn report(&self) {
-        for ((bus, device, address), ep) in &self.0 {
+        for ((source, bus, device, address), ep) in &self.0 {
             eprintln!(
-                "ISO usb{bus} {device:03} ep={address:02x}: {} completed URBs, {} frames, {} bytes, {} frame errors, {} URB errors, {} empty frames; max observed completion gap={} us",
+                "ISO usb{bus} {device:03} ep={address:02x} source={source}: {} completed URBs, {} frames, {} bytes, {} frame errors, {} URB errors, {} empty frames; max observed completion gap={} us",
                 ep.urbs,
                 ep.frames,
                 ep.bytes,

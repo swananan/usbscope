@@ -111,6 +111,9 @@ completion request lengths and latency also need an observed submission. Missing
 fields remain unknown to filters. ISO completions can be read without their
 submissions, including sparse frames and empty tail frames; actual transferred
 bytes are not treated as the original buffer's extent.
+Request pairing and ISO statistics are scoped to the input interface and section.
+Rewritten files preserve those sources as separate interfaces, even when their
+URB IDs or USB bus/device addresses coincide.
 
 `-C` uses decimal megabytes; `-G` uses capture timestamps. Both rotate between
 whole events, so a large event can exceed the size target. Files are named

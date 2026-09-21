@@ -1,10 +1,14 @@
 use crate::Event;
 use anyhow::{Context, Result, ensure};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::{
+    collections::HashMap,
+    io::{Read, Seek, SeekFrom, Write},
+};
 
 pub struct Writer<W> {
     output: W,
     bytes: u64,
+    interfaces: HashMap<u64, u32>,
 }
 
 impl<W: Write> Writer<W> {
@@ -18,10 +22,28 @@ impl<W: Write> Writer<W> {
         )?;
         // LINKTYPE_USB_LINUX_MMAPPED, no snap limit, microsecond timestamps.
         block(&mut output, 1, &[220, 0, 0, 0, 0, 0, 0, 0])?;
-        Ok(Self { output, bytes: 48 })
+        Ok(Self {
+            output,
+            bytes: 48,
+            interfaces: HashMap::new(),
+        })
     }
 
     pub fn write_event(&mut self, event: &mut Event) -> Result<()> {
+        // Preserve capture-source separation when flattening multiple input
+        // sections. Otherwise a subsequent read could pair unrelated URB IDs.
+        let interface = if let Some(index) = self.interfaces.get(&event.source_id) {
+            *index
+        } else {
+            let index =
+                u32::try_from(self.interfaces.len()).context("too many output interfaces")?;
+            if index != 0 {
+                block(&mut self.output, 1, &[220, 0, 0, 0, 0, 0, 0, 0])?;
+                self.bytes += 20;
+            }
+            self.interfaces.insert(event.source_id, index);
+            index
+        };
         let m = &event.meta;
         let desc_len = u32::try_from(event.iso.len())
             .context("too many ISO descriptors")?
@@ -40,7 +62,7 @@ impl<W: Write> Writer<W> {
         let ts = m.timestamp_ns / 1000;
         write_u32(&mut self.output, 6)?;
         write_u32(&mut self.output, total)?;
-        for value in [0, (ts >> 32) as u32, ts as u32, caplen, caplen] {
+        for value in [interface, (ts >> 32) as u32, ts as u32, caplen, caplen] {
             write_u32(&mut self.output, value)?;
         }
         let mut header = [0u8; 64];

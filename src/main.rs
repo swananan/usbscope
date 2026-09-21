@@ -291,20 +291,21 @@ fn run(args: Args) -> Result<()> {
     let mut assembler = Reassembler::default();
     let mut written = 0;
     let mut iso_stats = audio::IsoStats::default();
-    let mut submissions = HashMap::<u64, u64>::new();
+    let mut submissions = HashMap::<(u64, u64), u64>::new();
     let mut output_full = false;
     let mut consume_event = |mut event: Event| -> Result<bool> {
         if !output_full && args.count.is_none_or(|limit| written < limit) {
             let mut latency = None;
             if needs_latency {
                 let m = &event.meta;
+                let key = (event.source_id, m.urb_id);
                 if m.event_type == b'S' {
                     ensure!(
                         submissions.len() < 65536,
                         "too many unmatched submissions for latency filtering"
                     );
-                    submissions.insert(m.urb_id, m.timestamp_ns);
-                } else if let Some(start) = submissions.remove(&m.urb_id) {
+                    submissions.insert(key, m.timestamp_ns);
+                } else if let Some(start) = submissions.remove(&key) {
                     latency = m.timestamp_ns.checked_sub(start);
                 }
             }

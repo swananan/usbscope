@@ -11,6 +11,9 @@ pub mod pcapng;
 pub mod pcapng_read;
 
 pub struct Event {
+    /// Distinguishes pcapng interfaces across sections; live/raw use source 0.
+    /// URB IDs are only unique within one capture source.
+    pub source_id: u64,
     pub meta: EventMeta,
     pub iso: Vec<IsoDescriptor>,
     pub payload: SpooledTempFile,
@@ -142,6 +145,7 @@ impl Reassembler {
                 id,
                 Pending {
                     event: Event {
+                        source_id: 0,
                         meta,
                         iso: Vec::new(),
                         payload: SpooledTempFile::new(SPOOL_MEMORY),

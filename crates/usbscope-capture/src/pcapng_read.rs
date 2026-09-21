@@ -36,6 +36,7 @@ impl Endian {
     }
 }
 struct Interface {
+    source_id: u64,
     linktype: u16,
     units: u64,
     offset: i64,
@@ -45,7 +46,8 @@ pub struct Reader<R> {
     endian: Endian,
     section: bool,
     interfaces: Vec<Interface>,
-    requested: HashMap<u64, u32>,
+    next_source_id: u64,
+    requested: HashMap<(u64, u64), u32>,
     pub incomplete: u64,
 }
 impl<R: Read> Reader<R> {
@@ -55,6 +57,7 @@ impl<R: Read> Reader<R> {
             endian: Endian::Little,
             section: false,
             interfaces: vec![],
+            next_source_id: 0,
             requested: HashMap::new(),
             incomplete: 0,
         }
@@ -104,6 +107,7 @@ impl<R: Read> Reader<R> {
                     let mut body = [0u8; 8];
                     self.input.read_exact(&mut body)?;
                     let mut interface = Interface {
+                        source_id: self.next_source_id,
                         linktype: self.endian.u16(&body),
                         units: 1_000_000,
                         offset: 0,
@@ -138,6 +142,10 @@ impl<R: Read> Reader<R> {
                         }
                     }
                     skip(&mut self.input, u64::from(remaining))?;
+                    self.next_source_id = self
+                        .next_source_id
+                        .checked_add(1)
+                        .context("too many pcapng capture sources")?;
                     self.interfaces.push(interface);
                     self.footer(size)?;
                 }
@@ -150,6 +158,7 @@ impl<R: Read> Reader<R> {
                         .interfaces
                         .get(index)
                         .context("unknown pcapng interface")?;
+                    let source_id = interface.source_id;
                     ensure!(
                         interface.linktype == 220,
                         "only LINKTYPE_USB_LINUX_MMAPPED (220) is supported"
@@ -229,12 +238,12 @@ impl<R: Read> Reader<R> {
                             self.requested.len() < 65536,
                             "too many unmatched pcapng submissions"
                         );
-                        self.requested.insert(meta.urb_id, wire_len);
+                        self.requested.insert((source_id, meta.urb_id), wire_len);
                         meta.requested_len = wire_len;
                         true
                     } else {
                         meta.actual_len = wire_len;
-                        let request = self.requested.remove(&meta.urb_id);
+                        let request = self.requested.remove(&(source_id, meta.urb_id));
                         meta.requested_len = request.unwrap_or(0);
                         request.is_some()
                     };
@@ -293,6 +302,7 @@ impl<R: Read> Reader<R> {
                         continue;
                     }
                     return Ok(Some(Event {
+                        source_id,
                         meta,
                         iso,
                         payload,
