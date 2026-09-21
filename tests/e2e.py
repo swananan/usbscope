@@ -172,6 +172,24 @@ class CaptureE2E(unittest.TestCase):
                               record(2, 1, b'abcd'), record(2, 1, b'cdef', 2)], success=False)
         self.assertIn(b'overlapping', run.stderr)
 
+    def test_iso_frames_can_share_payload_memory(self):
+        records = [record(1, 1, meta(event='C', transfer=0, endpoint=0x81,
+                                   length=6, actual=8, payload=6, descriptors=2, status=0)),
+                   record(3, 1, struct.pack('<iIII', 0, 0, 4, 0)),
+                   record(3, 1, struct.pack('<iIII', 0, 2, 4, 0), 1),
+                   record(2, 1, b'cdef', 2), record(2, 1, b'abcd'), end(1, 8, 2)]
+        source, _ = self.convert(records)
+        self.assertEqual(packets(source.read_bytes())[0][96:], b'abcdef')
+        self.assertEqual(self.tshark(source, 'usb.iso.data'), ['61626364,63646566'])
+        target = self.root / 'overlap-replayed.pcapng'
+        result = subprocess.run([BINARY, '-r', str(source), '-w', str(target),
+                                 '--fail-on-loss'], capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual(source.read_bytes(), target.read_bytes())
+        records[-2] = record(2, 1, b'abXX')
+        _, result = self.convert(records, success=False)
+        self.assertIn(b'conflicting overlapping ISO payload', result.stderr)
+
     def test_truncated_archive_is_rejected(self):
         _, run = self.convert([record(1, 1, meta())[:-1]], success=False)
         self.assertIn(b'truncated archive', run.stderr)

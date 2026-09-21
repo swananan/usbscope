@@ -183,22 +183,38 @@ impl Reassembler {
                     .map(|(&a, &b)| (a, b));
                 let next = pending.ranges.range(offset..).next().map(|(&a, &b)| (a, b));
                 ensure!(
-                    previous.is_none_or(|(_, b)| b <= offset),
+                    pending.event.meta.transfer_type == 0
+                        || previous.is_none_or(|(_, b)| b <= offset),
                     "overlapping payload fragment"
                 );
                 ensure!(
-                    next.is_none_or(|(a, _)| a >= end),
+                    pending.event.meta.transfer_type == 0 || next.is_none_or(|(a, _)| a >= end),
                     "overlapping payload fragment"
                 );
                 let mut start = offset;
                 let mut merged_end = end;
-                if let Some((a, _)) = previous.filter(|(_, b)| *b == offset) {
+                let first = previous
+                    .filter(|(_, limit)| *limit >= offset)
+                    .map_or(offset, |(a, _)| a);
+                while let Some((&a, &b)) = pending.ranges.range(first..=end).next() {
+                    // ISO frames may share a buffer region. Both copies observe
+                    // the same snapshot; conflicting copies are never complete.
+                    let overlap_start = a.max(offset);
+                    let overlap_end = b.min(end);
+                    if overlap_start < overlap_end {
+                        let mut existing = vec![0; (overlap_end - overlap_start) as usize];
+                        pending.event.payload.seek(SeekFrom::Start(overlap_start))?;
+                        pending.event.payload.read_exact(&mut existing)?;
+                        ensure!(
+                            existing
+                                == body[(overlap_start - offset) as usize
+                                    ..(overlap_end - offset) as usize],
+                            "conflicting overlapping ISO payload"
+                        );
+                    }
                     pending.ranges.remove(&a);
-                    start = a;
-                }
-                if let Some((a, b)) = next.filter(|(a, _)| *a == end) {
-                    pending.ranges.remove(&a);
-                    merged_end = b;
+                    start = start.min(a);
+                    merged_end = merged_end.max(b);
                 }
                 pending.ranges.insert(start, merged_end);
                 pending.event.payload.seek(SeekFrom::Start(offset))?;
@@ -254,11 +270,18 @@ impl Reassembler {
                 let data_complete = if m.has_data == 0 {
                     pending.copied == 0
                 } else if m.transfer_type == 0 {
-                    pending
-                        .event
-                        .iso
-                        .iter()
-                        .all(|d| covers(u64::from(d.offset), u64::from(d.length)))
+                    pending.copied
+                        == pending
+                            .event
+                            .iso
+                            .iter()
+                            .map(|d| u64::from(d.length))
+                            .sum::<u64>()
+                        && pending
+                            .event
+                            .iso
+                            .iter()
+                            .all(|d| covers(u64::from(d.offset), u64::from(d.length)))
                 } else {
                     covers(0, u64::from(m.payload_len))
                 };

@@ -42,6 +42,9 @@ Payloads and ISO metadata travel in chunks through the BPF ring buffer and are
 reassembled in userspace. Payload length and ISO descriptor count have no
 application-imposed snap limit. The [capture semantics](usage.md#capture-semantics)
 and [usage limits](usage.md#current-usage-limits) describe completeness and format limits.
+ISO frames may reuse overlapping buffer regions. Reassembly verifies that
+repeated bytes agree and counts every frame's copied bytes; non-ISO overlapping
+transport fragments and conflicting ISO copies are rejected.
 
 Ring records, raw archives, build metadata, and generated pcapng use explicit
 little-endian encoding on every host. Kernel reads, map configuration, predicates,
