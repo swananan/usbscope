@@ -230,15 +230,37 @@ fn run(args: Args) -> Result<()> {
     };
     if let Some(raw) = &args.raw_output {
         ensure!(raw.as_os_str() != "-", "raw archive requires a file path");
-        if let Some(write) = &args.write {
-            different_files(raw, write)?;
-        }
-        if let Some(read) = &args.read {
-            different_files(raw, read)?;
-        }
     }
-    if let (Some(read), Some(write)) = (&args.read, &args.write) {
-        different_files(read, write)?;
+    ensure!(
+        args.device_context.is_none() || args.read.is_none(),
+        "--device-context is only available during live capture"
+    );
+    ensure!(
+        args.ready_file.is_none() || args.read.is_none(),
+        "--ready-file is only available during live capture"
+    );
+    // Validate every actual destination before creating any of them. Later
+    // rotated files use create_new, so they cannot overwrite another file.
+    let capture_path = args.write.as_ref().map(|path| {
+        if args.rotate_size.is_some() || args.rotate_seconds.is_some() {
+            output::rotated_path(path, 0)
+        } else {
+            path.clone()
+        }
+    });
+    let destinations: Vec<_> = [
+        capture_path.as_deref().filter(|p| p.as_os_str() != "-"),
+        args.raw_output.as_deref(),
+        args.device_context.as_deref(),
+        args.ready_file.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    for (index, destination) in destinations.iter().enumerate() {
+        for other in &destinations[index + 1..] {
+            different_files(destination, other)?;
+        }
     }
     for source in [
         args.read.as_deref(),
@@ -248,23 +270,11 @@ fn run(args: Args) -> Result<()> {
     .into_iter()
     .flatten()
     {
-        for destination in [&args.write, &args.raw_output, &args.device_context]
-            .into_iter()
-            .flatten()
-        {
-            if destination.as_os_str() != "-" {
-                different_files(source, destination)?;
-            }
+        for destination in &destinations {
+            different_files(source, destination)?;
         }
     }
     if let Some(context) = &args.device_context {
-        ensure!(
-            args.read.is_none(),
-            "--device-context is only available during live capture"
-        );
-        for other in [&args.write, &args.raw_output].into_iter().flatten() {
-            different_files(context, other)?;
-        }
         devices::snapshot(context)?;
     }
     let input = args
@@ -305,11 +315,6 @@ fn run(args: Args) -> Result<()> {
             output::CaptureOutput::new(path, rotate_bytes, args.rotate_seconds, args.max_files)
         })
         .transpose()?;
-    if (args.rotate_size.is_some() || args.rotate_seconds.is_some())
-        && let (Some(base), Some(raw)) = (&args.write, &args.raw_output)
-    {
-        different_files(&output::rotated_path(base, 0), raw)?;
-    }
     let mut raw = args
         .raw_output
         .as_ref()

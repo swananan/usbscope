@@ -535,7 +535,40 @@ class CaptureE2E(unittest.TestCase):
         self.assertEqual(obj.read_bytes(), b'object sentinel')
         self.convert([record(1, 1, meta()), end(1)], success=False,
             options=['-C', '1', '--raw-output', str(self.root / 'output.pcapng.000000')])
-        self.assertTrue((self.root / 'output.pcapng.000000').read_bytes().startswith(bytes.fromhex('0a0d0d0a')))
+        self.assertFalse((self.root / 'output.pcapng.000000').exists())
+
+    def test_ready_file_aliases_are_rejected_before_creating_outputs(self):
+        obj = self.root / 'test.bpf.o'
+        obj.write_bytes(b'object sentinel')
+        expression = self.root / 'filter.txt'
+        expression.write_text('bulk')
+        output = self.root / 'capture.pcapng'
+        raw = self.root / 'capture.usbraw'
+        context = self.root / 'context.json'
+        for other in [obj, expression, output, raw, context]:
+            with self.subTest(path=other.name):
+                alias = self.root / 'ready'
+                alias.symlink_to(other.name)
+                result = subprocess.run([BINARY, '--bpf-object', str(obj),
+                    '-F', str(expression), '-w', str(output), '--raw-output', str(raw),
+                    '--device-context', str(context), '--ready-file', str(alias)],
+                    capture_output=True)
+                alias.unlink()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(b'same file', result.stderr)
+                self.assertEqual(obj.read_bytes(), b'object sentinel')
+                self.assertEqual(expression.read_text(), 'bulk')
+                for destination in [output, raw, context]:
+                    self.assertFalse(destination.exists(), 'alias rejection already created an output')
+        # The marker must also be distinct from the first actual rotated file.
+        result = subprocess.run([BINARY, '--bpf-object', str(obj), '-w', str(output),
+            '-C', '1', '--ready-file', str(output) + '.000000'], capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b'same file', result.stderr)
+        self.assertFalse(Path(str(output) + '.000000').exists())
+        # An offline replay cannot signal that probes have attached.
+        self.convert([record(1, 1, meta()), end(1)], success=False,
+            options=['--ready-file', str(self.root / 'ready')])
 
     def test_new_output_aliases_are_rejected_before_creating_files(self):
         source = self.root / 'source.usbraw'

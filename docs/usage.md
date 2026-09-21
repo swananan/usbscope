@@ -93,6 +93,11 @@ Without `-w`, the CLI prints an event summary. `-c` counts complete events;
 for beside the executable, falling back to `target/usbscope.bpf.o`, and can be
 supplied with `--bpf-object`.
 
+Supervisors can use `--ready-file PATH` to signal that all probes are attached;
+this option requires live capture. Before creating outputs, the CLI rejects
+paths that alias an input, another output, or the readiness marker, including
+symlink aliases and the first rotated capture file.
+
 At stop, observation of new submissions is disabled, with a 200 ms completion drain. URBs
 still in flight at that boundary are reported separately from transport loss.
 
