@@ -116,14 +116,44 @@ fn main() {
 }
 
 fn different_files(first: &Path, second: &Path) -> Result<()> {
-    ensure!(first != second, "input and output must be different files");
+    ensure!(first != second, "capture paths refer to the same file");
     if let (Ok(a), Ok(b)) = (fs::metadata(first), fs::metadata(second)) {
         ensure!(
             (a.dev(), a.ino()) != (b.dev(), b.ino()),
             "input and output refer to the same file"
         );
     }
+    ensure!(
+        resolved_file_path(first)? != resolved_file_path(second)?,
+        "capture paths refer to the same file"
+    );
     Ok(())
+}
+
+/// Resolve the parent and final symlinks even when the destination file has not
+/// been created yet. Comparing metadata alone misses aliases of new outputs.
+fn resolved_file_path(path: &Path) -> Result<PathBuf> {
+    let mut path = path.to_owned();
+    for _ in 0..40 {
+        let name = path.file_name().context("capture path must name a file")?;
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let resolved = parent
+            .canonicalize()
+            .with_context(|| format!("resolving {}", path.display()))?
+            .join(name);
+        match fs::symlink_metadata(&resolved) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                path = resolved.parent().unwrap().join(fs::read_link(&resolved)?);
+            }
+            Ok(_) => return Ok(resolved),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(resolved),
+            Err(error) => return Err(error.into()),
+        }
+    }
+    anyhow::bail!("too many symlinks in capture path {}", path.display())
 }
 
 fn output(path: &Path) -> Result<BufWriter<Box<dyn Write>>> {

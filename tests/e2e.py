@@ -478,6 +478,31 @@ class CaptureE2E(unittest.TestCase):
             options=['-C', '1', '--raw-output', str(self.root / 'output.pcapng.000000')])
         self.assertTrue((self.root / 'output.pcapng.000000').read_bytes().startswith(bytes.fromhex('0a0d0d0a')))
 
+    def test_new_output_aliases_are_rejected_before_creating_files(self):
+        source = self.root / 'source.usbraw'
+        source.write_bytes(b'USBSCP\0\x01' + record(1, 1, meta()) + end(1))
+        (self.root / 'subdir').mkdir()
+        parent_link = self.root / 'parent-link'
+        parent_link.symlink_to(self.root, target_is_directory=True)
+        for kind in ['dot', 'parent', 'parent-symlink', 'dangling-symlink']:
+            with self.subTest(kind=kind):
+                target = self.root / f'{kind}.pcapng'
+                if kind == 'dot':
+                    alias = f'{self.root}/./{target.name}'
+                elif kind == 'parent':
+                    alias = str(self.root / 'subdir' / '..' / target.name)
+                elif kind == 'parent-symlink':
+                    alias = str(parent_link / target.name)
+                else:
+                    link = self.root / 'dangling'
+                    link.symlink_to(target.name)
+                    alias = str(link)
+                result = subprocess.run([BINARY, '-r', str(source), '-w', str(target),
+                    '--raw-output', alias, '--fail-on-loss'], capture_output=True)
+                self.assertNotEqual(result.returncode, 0, result.stderr.decode())
+                self.assertIn(b'same file', result.stderr)
+                self.assertFalse(target.exists(), 'alias rejection already created an output')
+
 
 if __name__ == '__main__':
     unittest.main(argv=['e2e.py'] + REST, verbosity=2)
