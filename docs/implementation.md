@@ -243,8 +243,8 @@ workflow had not yet run. Reproduction instructions are in [platforms.md](platfo
 ## Remaining validation and scope
 
 - Physical controllers and DMA bounce/copyback paths need hardware testing.
-- Live ISO IN, interrupt traffic, separately allocated SG chains, and HCD enqueue
-  failure paths need dedicated kernel fixtures; existing coverage must not be
+- Live ISO IN, successful interrupt traffic, and separately allocated SG chains
+  need dedicated kernel fixtures; existing coverage must not be
   treated as evidence for those cases.
 - arm64 physical devices, kernel BTI, 16 KiB pages, and VA widths other than 48
   are not validated. SG supports SPARSEMEM_VMEMMAP on x86_64 and arm64; other

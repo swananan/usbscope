@@ -56,8 +56,10 @@ live-capture privileges, kernel BTF, USB hardware, or a BPF object.
   memory are unsupported. arm64 16 KiB pages and other VA widths remain unverified.
 - **Validation coverage:** live control, contiguous/SG bulk, and ISO OUT have
   QEMU e2e coverage. Physical controllers, DMA bounce paths, live ISO IN,
-  interrupt traffic, separately allocated SG chains, enqueue failures, and
+  successful interrupt traffic, separately allocated SG chains, and
   physical arm64 devices still need validation.
+  The VM audio suite also covers overlapping buffers, short-packet errors,
+  STALL, cancellation, and root-hub interrupt enqueue failure.
 - **Audio context:** the device JSON is an initial sysfs snapshot. Configuration
   and alternate-setting changes over time, UAC feedback decoding, and PCM/WAV
   export are not implemented.

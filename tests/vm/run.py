@@ -253,6 +253,45 @@ sync
 echo USBSCOPE_VM_PASS'''))
     if args.sg:
         init.write_text(init.read_text().replace('/usb-fixture --bulk', '/usb-fixture --sg'))
+    if args.audio:
+        init.write_text(init.read_text().replace('sync\necho USBSCOPE_VM_PASS', '''
+iso_interface=
+for entry in /sys/bus/usb/drivers/usbscope-iso-test/*:*; do
+    test ! -L "$entry" || iso_interface=${entry##*/}
+done
+test -n "$iso_interface" || fail
+echo "$iso_interface" > /sys/bus/usb/drivers/usbscope-iso-test/unbind || fail
+/usbscope --bpf-object /usbscope.bpf.o -w /out/edges.pcapng --raw-output /out/edges.usbraw --ready-file /tmp/edges-ready --duration 4 --fail-on-loss 2>/out/edges.log &
+capture=$!
+for i in $(seq 1 600); do
+    test -f /tmp/edges-ready && break
+    kill -0 $capture 2>/dev/null || fail
+    sleep 0.1
+done
+test -f /tmp/edges-ready || fail
+echo 1 > /sys/module/usbscope_iso/parameters/overlap || fail
+echo "$iso_interface" > /sys/bus/usb/drivers/usbscope-iso-test/bind || fail
+test "$(cat /sys/module/usbscope_iso/parameters/result)" = 0 || fail
+cat /sys/module/usbscope_iso/parameters/actual_lengths > /out/overlap-lengths.txt
+cat /sys/module/usbscope_iso/parameters/frame_status > /out/overlap-status.txt
+echo "$iso_interface" > /sys/bus/usb/drivers/usbscope-iso-test/unbind || fail
+echo 0 > /sys/module/usbscope_iso/parameters/overlap || fail
+echo 1 > /sys/module/usbscope_iso/parameters/exercise_errors || fail
+echo "$iso_interface" > /sys/bus/usb/drivers/usbscope-iso-test/bind || fail
+test "$(cat /sys/module/usbscope_iso/parameters/result)" = 0 || fail
+cat /sys/module/usbscope_iso/parameters/actual_lengths > /out/cancel-lengths.txt
+cat /sys/module/usbscope_iso/parameters/frame_status > /out/cancel-status.txt
+cat /sys/module/usbscope_iso/parameters/edge_status > /out/edge-status.txt
+cat /sys/module/usbscope_iso/parameters/edge_lengths > /out/edge-lengths.txt
+cat /sys/module/usbscope_iso/parameters/short_data > /out/short-data.txt
+wait $capture || fail
+/usbscope -r /out/edges.usbraw -w /out/edges-replay.pcapng --fail-on-loss || fail
+cmp /out/edges.pcapng /out/edges-replay.pcapng || fail
+/usbscope -r /out/edges.pcapng -w /out/edges-roundtrip.pcapng --fail-on-loss || fail
+cmp /out/edges.pcapng /out/edges-roundtrip.pcapng || fail
+echo USBSCOPE_EDGE_GUEST_PASS
+sync
+echo USBSCOPE_VM_PASS'''))
     if args.compare_tcpdump:
         script = init.read_text().replace("'^# CONFIG_USB_MON is not set$'", "'^CONFIG_USB_MON=y$'")
         script = script.replace('/usbscope --bpf-object /usbscope.bpf.o -w /out/live.pcapng', '''
@@ -318,3 +357,6 @@ wait $reference || fail''', 1)
         subprocess.run(['python3', str(ROOT / 'tests/vm/compare.py'), str(args.artifacts)]
                        + (['--audio'] if args.audio else []), cwd=ROOT, check=True)
         subprocess.run(['python3', str(ROOT / 'tests/vm/test_compare.py'), str(args.artifacts)], cwd=ROOT, check=True)
+    if args.audio:
+        subprocess.run(['python3', str(ROOT / 'tests/vm/validate_edges.py'), str(args.artifacts)],
+                       cwd=ROOT, check=True)

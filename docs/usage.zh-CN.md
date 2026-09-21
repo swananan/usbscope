@@ -47,8 +47,9 @@ USB 硬件或 BPF 目标文件。
   `CONFIG_ARM64_VA_BITS=48`，还需要读取运行内核的配置。不支持 ISO SG 缓冲区、其他内存模型
   或 arm64 带标签的 KASAN 内存。arm64 的 16 KiB 页和其他虚拟地址位数尚未验证。
 - **验证范围：** 实时 control、连续缓冲区/SG bulk 和 ISO OUT 已有 QEMU e2e 覆盖。
-  实体控制器、DMA bounce 路径、实时 ISO IN、中断传输、单独分配的 SG 链、入队失败及
+  实体控制器、DMA bounce 路径、实时 ISO IN、成功的中断传输、单独分配的 SG 链及
   arm64 实体设备仍需验证。
+  VM 音频测试还覆盖重叠缓冲区、短包错误、STALL、取消和 root hub 中断请求入队失败。
 - **音频上下文：** 设备 JSON 仅包含初始 sysfs 快照。尚未实现配置及备用设置
   （alternate setting）的变化时间线、UAC 反馈解码和 PCM/WAV 导出。
 

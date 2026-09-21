@@ -76,6 +76,10 @@ the host's results, including when their architectures differ.
 Artifacts are retained under `target/vm-artifacts`.
 The audio suite builds a VM-only test driver against the chosen kernel and
 verifies a 137-frame sparse ISO transfer against independent driver results.
+It then rebinds the same driver to exercise overlapping ISO buffers, short-not-ok
+control responses, device STALL, root-hub enqueue rejection, and ISO cancellation.
+`edges.pcapng`, `edges.usbraw`, the driver result files, and `edges.log` verify
+statuses, pairing, payloads, exact replay, and zero capture loss despite USB errors.
 
 For independent live capture comparison, build an additional kernel with usbmon
 enabled and run with `--compare-tcpdump`. The [comparison guide](usbmon-comparison.md)

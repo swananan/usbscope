@@ -46,7 +46,7 @@ libpcap 或匹配版本的动态 libc。Wireshark/TShark 仅用于查看输出�
 
 每个任务检查 CLI 架构、字节序、无动态加载器/共享库依赖及 ARM 页对齐，同时验证 BPF
 架构、字节序、BTF、CO-RE 重定位、校验和及可执行权限。随后将实际归档解压到新目录，
-执行全部 23 项 CLI/TShark e2e。ARM 二进制通过 qemu-user 在空目标 sysroot 下执行。
+执行全部 CLI/TShark e2e。ARM 二进制通过 qemu-user 在空目标 sysroot 下执行。
 
 Build CI 只构建 CLI 与 BPF 对象，不构建内核、BusyBox、libpcap、tcpdump 或 VM 测试组件。
 QEMU 和 TShark 只在 CI 上用于验证。真实 USB 抓包继续由独立的[内核矩阵（英文）](ci.md)

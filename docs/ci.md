@@ -62,7 +62,7 @@ Every kernel job downloads these artifacts. All kernels of a target use
 the **same CLI and BPF bytes**, exercising CO-RE without per-kernel recompilation.
 Little-endian ARM guests use signature-verified Ubuntu 24.04 packages. Big-endian
 guests use the checksum-pinned Bootlin SDK and statically built BusyBox/tcpdump.
-The big-endian build job additionally runs unit tests and all 23 CLI/TShark e2e
+The big-endian build job additionally runs unit tests and all CLI/TShark e2e
 cases through qemu-user.
 Tar archives preserve executable modes and library symlinks across artifact
 upload/download. The x86_64 CLI also performs offline verification of ARM captures.
@@ -88,6 +88,10 @@ full 2,097,664-byte SG payloads in both directions, 137 sparse ISO audio frames,
 filter checks, raw replay, guest/host pcapng equivalence, TShark decoding, and
 forced ring loss. USB_MON=y also requires independent tcpdump comparison and
 negative comparison tests, followed by a separate contiguous-buffer comparison.
+The audio VM also records a separate edge-case capture: overlapping ISO buffers,
+short-not-ok responses, STALL, root-hub enqueue failure, and ISO cancellation.
+Driver callback results independently check status/length/payload, and both raw
+and pcapng replay must retain every event without classifying USB errors as loss.
 The [comparison guide](usbmon-comparison.md) documents the reference's truncation
 limits; usbscope's full payload is still checked against the independent fixture.
 

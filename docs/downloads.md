@@ -56,7 +56,7 @@ creating or publishing a GitHub Release.
 Each job checks the executable's architecture, byte order, absence of a dynamic
 loader/shared libraries, and ARM page alignment. It checks the BPF architecture,
 byte order, BTF, CO-RE relocations, checksums, and executable mode. It then extracts
-the actual archive into a fresh directory and runs all 23 CLI/TShark e2e cases.
+the actual archive into a fresh directory and runs all CLI/TShark e2e cases.
 ARM binaries execute through qemu-user with an empty target sysroot.
 
 These jobs build the CLI and BPF object without building a kernel, BusyBox,
