@@ -6,44 +6,54 @@
 [![build](https://github.com/swananan/usbscope/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/swananan/usbscope/actions/workflows/build.yml)
 [![kernel e2e](https://github.com/swananan/usbscope/actions/workflows/vm-e2e.yml/badge.svg?branch=main)](https://github.com/swananan/usbscope/actions/workflows/vm-e2e.yml)
 
-usbscope 是一个基于 eBPF 的 USB 抓包命令行工具，面向 **Linux 内核编译时未启用
-`CONFIG_USB_MON` 的小众场景**。它不依赖 usbmon，记录主机侧 USB 请求（URB），
-帮助排查 USB 设备、驱动和音频传输问题。
+**在没有 usbmon 的 Linux 上抓取 USB 请求，用 Wireshark 分析。**
 
-## 能做什么
+usbscope 是一个基于 eBPF 的 USB 抓包命令行工具，专为 **Linux 内核编译时未启用
+`CONFIG_USB_MON`** 的小众场景设计。它记录主机侧 USB 请求（URB），帮助排查设备、
+驱动和 USB 音频传输问题。
 
-- 抓取 USB 载荷，不人为设置长度截断上限，并明确报告抓取丢失。
-- 提供参考 tcpdump 设计的命令参数，按设备、端点、传输类型、载荷和延迟过滤。
-- 输出 Wireshark 可读取的 pcapng 文件，支持离线回放和文件轮转。
-- 保留 ISO 帧元数据，提供 USB 音频分析所需的统计信息。
+[下载预编译包](docs/downloads.zh-CN.md) · [开始抓包](docs/usage.zh-CN.md#实时抓包) ·
+[检查运行要求](docs/usage.zh-CN.md#运行要求与最低内核版本)
+
+## 能帮你做什么
+
+- **用 Wireshark 分析抓包。** 将 USB 请求、完成事件和错误保存为 pcapng 文件。
+- **找到关心的流量。** 使用接近 tcpdump 的命令参数，按设备、端点、传输类型、载荷和延迟过滤。
+- **保留完整载荷。** 不人为截断 USB payload；读取失败或资源不足时明确报告抓取丢失。
+- **排查 USB 音频问题。** 保留等时（ISO）传输的逐帧信息，统计帧错误和完成事件的时间间隔。
+
+还可以离线筛选已保存的抓包，并按大小或时间轮转输出文件。具体示例见[使用指南](docs/usage.zh-CN.md)。
 
 ## 支持环境
 
-| 要求 | 支持范围 |
+| 项目 | 支持与验证情况 |
 | --- | --- |
-| 操作系统与 CPU | Linux：x86_64（小端）、arm64（小端或大端）。不支持 32 位 ARM、Windows 或 macOS。 |
-| 内核 | **最低已验证版本：Linux 6.6.142。** 具体配置见[验证记录（英文）](docs/ci.md#validation-status)及[大端内核限制](docs/big-endian.zh-CN.md)。 |
-| 页大小 | x86_64：4 KiB；arm64：4 KiB 或 64 KiB。 |
-| 内核配置 | USB 核心编译进内核（`CONFIG_USB=y`），具备内核 BTF 和 BPF/跟踪功能。`CONFIG_USB_MON` 可开可关。 |
+| 平台 | Linux x86_64（小端）或 arm64（小端或大端）。大端有额外的[内核版本限制](docs/big-endian.zh-CN.md)。 |
+| 内核 | **最低已验证版本：Linux 6.6.142。** 兼容范围以[已测试的内核配置（英文）](docs/ci.md)为准；更早版本尚未验证。 |
+| 内核功能 | USB 核心编译进内核（`CONFIG_USB=y`），具备内核 BTF 和 BPF/跟踪功能。`CONFIG_USB_MON` 可开可关。 |
 | 实时抓包权限 | root 权限、可读的内核 BTF，以及所需内核符号地址的访问权限。 |
-| 跨内核兼容 | 支持在同一受支持 CPU 架构和字节序内使用 **eBPF CO-RE**。 |
+| 已验证页大小 | x86_64：4 KiB；arm64：4 KiB 和 64 KiB。arm64 的 16 KiB 页尚未验证。 |
 
-Linux 5.17 只是上游内核的功能门槛，**不是最低已验证版本**；从 5.17 到早期 6.6
-仍未验证。当前实时抓包验证基于 QEMU，实体 USB 控制器仍需验证。部署前请阅读
-[完整运行要求与使用限制](docs/usage.zh-CN.md)。离线读取不需要实时抓包权限、内核 BTF、
+支持 **eBPF CO-RE**，同一架构和字节序的程序可用于已验证的不同内核。
+预编译包采用静态链接，抓包机器无需安装 Rust、LLVM、libbpf 或 libpcap。
+
+当前实时抓包验证基于 QEMU，实体 USB 控制器仍待验证。工具观察的是主机侧请求，
+不记录 USB 总线上的电气事务。详细条件见[完整运行要求](docs/usage.zh-CN.md#运行要求与最低内核版本)
+和[抓包限制](docs/usage.zh-CN.md#当前使用限制)。
+
+**离线读取只需可执行文件和抓包文件**，在受支持的平台上无需 root 权限、内核 BTF、
 USB 硬件或 BPF 目标文件。
 
 ## 文档索引
 
-| 主题 | 文档 |
+| 想做什么 | 从这里开始 |
 | --- | --- |
-| 下载 | [各平台发行包与运行依赖](docs/downloads.zh-CN.md) |
-| 入门与抓包命令 | [使用方法、过滤、离线读取、轮转与音频](docs/usage.zh-CN.md) |
-| 兼容性与限制 | [运行要求](docs/usage.zh-CN.md#运行要求与最低内核版本) · [使用限制](docs/usage.zh-CN.md#当前使用限制) |
-| 过滤器参考 | [USB 过滤语法（英文）](docs/filters.md) |
-| 构建与测试 | [工具链、打包与 e2e 测试](docs/development.zh-CN.md) |
-| 实现细节 | [Aya/Rust、CO-RE、ring buffer 与挂载点](docs/architecture.zh-CN.md) |
-| 平台支持 | [架构覆盖与 ARM 测试（英文）](docs/platforms.md) · [大端构建与测试](docs/big-endian.zh-CN.md) |
-| 内核 CI 与抓包对比 | [内核矩阵（英文）](docs/ci.md) · [tcpdump/usbmon 与 TShark 验证（英文）](docs/usbmon-comparison.md) |
-| 开发记录 | [实现阶段与验证证据（英文）](docs/implementation.md) |
-| 许可证 | [MIT OR Apache-2.0 及组件许可证](docs/licensing.md#简体中文) |
+| 获取可运行的程序 | [下载与运行依赖](docs/downloads.zh-CN.md) |
+| 抓包与分析 | [命令示例、离线读取、轮转与音频](docs/usage.zh-CN.md) · [过滤器参考（英文）](docs/filters.md) |
+| 确认兼容性 | [运行要求与限制](docs/usage.zh-CN.md#运行要求与最低内核版本) · [平台覆盖（英文）](docs/platforms.md) · [大端支持](docs/big-endian.zh-CN.md) |
+| 构建或参与开发 | [构建与测试指南](docs/development.zh-CN.md) |
+| 了解实现 | [Aya/Rust、CO-RE、ring buffer 与挂载点](docs/architecture.zh-CN.md) |
+| 查看测试方式 | [内核 CI 矩阵（英文）](docs/ci.md) · [tcpdump/usbmon 与 TShark 对比（英文）](docs/usbmon-comparison.md) |
+| 查看开发进展 | [实现阶段与验证记录（英文）](docs/implementation.md) |
+
+采用 **MIT OR Apache-2.0** 许可证，组件许可与分发说明见[许可证文档](docs/licensing.md#简体中文)。
