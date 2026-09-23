@@ -2,20 +2,19 @@
 
 [README](../README.md) · English | [简体中文](downloads.zh-CN.md)
 
-## Download a build
+## Download a release
 
-Open the [build workflow](https://github.com/swananan/usbscope/actions/workflows/build.yml),
-select a successful run for the desired commit, and download the matching item
-under **Artifacts**. Each item contains a `.tar.gz` archive and its `.sha256` file.
+Open the [latest release](https://github.com/swananan/usbscope/releases/latest)
+and download the `.tar.gz` archive for your platform and its matching `.sha256`
+file from **Assets**. Release downloads do not require a GitHub account.
 
-| Linux target | Artifact / archive stem |
+| Linux target | Archive |
 | --- | --- |
-| x86_64, little endian | `usbscope-x86_64-linux` |
-| arm64, little endian | `usbscope-aarch64-linux` |
-| arm64, big endian | `usbscope-aarch64_be-linux` |
+| x86_64, little endian | `usbscope-x86_64-linux.tar.gz` |
+| arm64, little endian | `usbscope-aarch64-linux.tar.gz` |
+| arm64, big endian | `usbscope-aarch64_be-linux.tar.gz` |
 
-After unpacking the downloaded artifact ZIP, verify and extract the archive.
-For x86_64:
+Verify and extract the archive. For x86_64:
 
 ```sh
 sha256sum --check usbscope-x86_64-linux.tar.gz.sha256
@@ -44,6 +43,14 @@ Live capture uses the adjacent BPF object and the host's kernel BTF, tracing
 support, kernel configuration, and privileges described in the
 [runtime requirements](usage.md#requirements-and-minimum-kernel-version).
 Offline replay only needs the executable and input file.
+
+## Development builds
+
+For an unreleased commit, open the
+[build workflow](https://github.com/swananan/usbscope/actions/workflows/build.yml),
+select a successful run, and download the matching platform under **Artifacts**.
+These downloads require signing in to GitHub. Unpack the artifact ZIP to obtain
+the `.tar.gz` archive and `.sha256` file, then follow the same steps above.
 
 ## Build CI
 

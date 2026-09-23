@@ -2,19 +2,19 @@
 
 [README](../README.zh-CN.md) · [English](downloads.md) | 简体中文
 
-## 下载构建产物
+## 下载发布版本
 
-打开 [build 工作流](https://github.com/swananan/usbscope/actions/workflows/build.yml)，
-选择所需提交对应的成功运行，在 **Artifacts** 中下载目标平台的产物。
-每个产物包含一个 `.tar.gz` 归档及其 `.sha256` 校验文件。
+打开[最新 Release](https://github.com/swananan/usbscope/releases/latest)，
+在 **Assets** 中下载目标平台的 `.tar.gz` 归档及其对应的 `.sha256` 校验文件。
+下载 Release 附件无需 GitHub 账号。
 
-| Linux 目标平台 | Artifact / 归档名称前缀 |
+| Linux 目标平台 | 归档名称 |
 | --- | --- |
-| x86_64，小端 | `usbscope-x86_64-linux` |
-| arm64，小端 | `usbscope-aarch64-linux` |
-| arm64，大端 | `usbscope-aarch64_be-linux` |
+| x86_64，小端 | `usbscope-x86_64-linux.tar.gz` |
+| arm64，小端 | `usbscope-aarch64-linux.tar.gz` |
+| arm64，大端 | `usbscope-aarch64_be-linux.tar.gz` |
 
-解开下载的 Artifact ZIP 后，验证并解压其中的归档。以 x86_64 为例：
+验证并解压归档。以 x86_64 为例：
 
 ```sh
 sha256sum --check usbscope-x86_64-linux.tar.gz.sha256
@@ -37,6 +37,14 @@ libpcap 或匹配版本的动态 libc。Wireshark/TShark 仅用于查看输出�
 
 实时抓包需要同目录的 BPF 对象，以及宿主机的内核 BTF、跟踪支持、内核配置和相应权限，
 具体见[运行要求](usage.zh-CN.md#运行要求与最低内核版本)。离线读取只需要可执行文件和输入文件。
+
+## 下载开发版本
+
+如需尚未发布的提交，打开
+[build 工作流](https://github.com/swananan/usbscope/actions/workflows/build.yml)，
+选择所需提交对应的成功运行，在 **Artifacts** 中下载目标平台的产物。
+此方式需要登录 GitHub。解开 Artifact ZIP 后即可得到 `.tar.gz` 归档和 `.sha256`
+文件，按上面的步骤验证并使用。
 
 ## Build CI
 
